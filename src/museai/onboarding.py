@@ -93,6 +93,35 @@ def driver_conflict(driver: str) -> str | None:
     return None
 
 
+WATCHED_ENV = (
+    "MUSE2API_DRIVER",
+    "MUSE2API_API_KEY",
+    "MUSE2API_ADMIN_KEY",
+    "MUSE2API_DATA_DIR",
+    "MUSE2API_PORT",
+)
+"""Shell variables users trip over. ``pydantic-settings`` prefers these over ``.env``."""
+
+
+def env_conflicts() -> list[tuple[str, str, str]]:
+    """``(key, shell value, .env value)`` for every watched variable they disagree on."""
+    from_file = read_env(ENV_FILE)
+    conflicts: list[tuple[str, str, str]] = []
+    for key in WATCHED_ENV:
+        shell = os.environ.get(key)
+        if not shell:
+            continue
+        configured = from_file.get(key, "")
+        if configured == shell:
+            continue
+        conflicts.append((key, _mask(value=shell), configured or "(unset)"))
+    return conflicts
+
+
+def _mask(*, value: str) -> str:
+    return value if len(value) <= 8 else f"{value[:6]}…{value[-4:]}"
+
+
 # --------------------------------------------------------------------------- cookies
 
 
@@ -262,6 +291,16 @@ def doctor_checks(settings: Settings, accounts: list[Account]) -> list[Check]:
             )
         )
 
+    for key, shell_value, env_value in env_conflicts():
+        checks.append(
+            Check(
+                "env override",
+                False,
+                f"{key}={shell_value} (shell) vs {env_value} (.env)",
+                "unset the shell variable or match it, or the snippets below are wrong",
+            )
+        )
+
     if settings.driver == "http":
         missing = [m for m in ("websockets", "noise") if not _installed(m)]
         checks.append(
@@ -371,6 +410,8 @@ __all__ = [
     "CookieParseError",
     "ENV_FILE",
     "ENV_TEMPLATE",
+    "WATCHED_ENV",
+    "env_conflicts",
     "account_store",
     "async_save_account",
     "client_snippets",

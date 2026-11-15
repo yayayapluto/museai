@@ -54,6 +54,7 @@ class DashboardState:
     handler: RingHandler
     started_at: float = field(default_factory=time.monotonic)
     server: uvicorn.Server | None = None
+    rendered_records: int = 0
 
     def uptime(self) -> str:
         seconds = int(time.monotonic() - self.started_at)
@@ -134,11 +135,23 @@ def info_lines(
     return rows
 
 
-def _install_ring(level: str) -> RingHandler:
+def _install_ring(level: str, *, mirror_to_terminal: bool = True) -> RingHandler:
+    """Collect records for the dashboard.
+
+    With the dashboard on screen the terminal belongs to Rich, so every stream handler is
+    removed: a single log line written behind Rich's back corrupts its cursor bookkeeping
+    and the panel gets appended instead of redrawn.
+    """
     handler = RingHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%H:%M:%S"))
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%H:%M:%S")
+    )
     root = logging.getLogger()
     root.setLevel(level.upper())
+    if not mirror_to_terminal:
+        for existing in list(root.handlers):
+            if isinstance(existing, logging.StreamHandler):
+                root.removeHandler(existing)
     root.addHandler(handler)
     return handler
 
@@ -219,7 +232,8 @@ def _startup_failure(task: asyncio.Task[Any]) -> str | None:
 
 
 async def serve(settings: Settings, *, show_ui: bool, show_keys: bool) -> int:
-    handler = _install_ring(settings.log_level)
+    show_ui = show_ui and sys.stdout.isatty()
+    handler = _install_ring(settings.log_level, mirror_to_terminal=not show_ui)
     state = DashboardState(settings=settings, handler=handler)
     app = create_app(settings)
     config = uvicorn.Config(
@@ -227,7 +241,8 @@ async def serve(settings: Settings, *, show_ui: bool, show_keys: bool) -> int:
         host=settings.host,
         port=settings.port,
         log_level=settings.log_level.lower(),
-        access_log=not show_ui,
+        access_log=False,  # a request line would fight the dashboard for the terminal
+        log_config=None if show_ui else uvicorn.config.LOGGING_CONFIG,
     )
     server = uvicorn.Server(config)
     state.server = server
@@ -238,10 +253,18 @@ async def serve(settings: Settings, *, show_ui: bool, show_keys: bool) -> int:
             return 0
         from rich.live import Live
 
-        with Live(render_dashboard(state, show_keys), console=None, refresh_per_second=4) as live:
+        with Live(
+            render_dashboard(state, show_keys),
+            console=None,
+            screen=True,  # own the alternate screen: redraw, never stack
+            auto_refresh=False,
+        ) as live:
+            live.refresh()
             while not server.should_exit and not task.done():
-                live.update(render_dashboard(state, show_keys))
                 await asyncio.sleep(0.25)
+                live.update(render_dashboard(state, show_keys), refresh=True)
+                if len(state.handler.records) != state.rendered_records:
+                    state.rendered_records = len(state.handler.records)
         failure = _startup_failure(task)
         if failure:
             return 1

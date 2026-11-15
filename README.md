@@ -1,7 +1,7 @@
 <h1 align="center">Muse AI</h1>
 
 <p align="center">
-  <b>OpenAI-compatible API gateway for <a href="https://muse.ai">muse.ai</a> personal workspaces, featuring native 9Router integration.</b>
+  <b>OpenAI-compatible API gateway for <a href="https://muse.ai">muse.ai</a> personal workspaces, with native 9Router integration.</b>
 </p>
 
 <p align="center">
@@ -14,164 +14,250 @@
 
 ---
 
-## Architecture
+`museai` exposes a personal muse.ai workspace — which is browser-only — as a
+standard OpenAI API (`/v1/chat/completions`, `/v1/images/generations`, `/v1/videos`,
+`/v1/models`). It drives a headless Chromium logged in with your muse.ai session
+cookies and streams the assistant output back to any OpenAI-compatible client:
+OpenAI SDKs, LangChain, LobeChat, NextChat, Cherry Studio, or 9Router.
 
-```text
-OpenAI SDK / 9Router / Web Client
-              │
-              ▼ HTTP (Bearer Token)
-       ┌──────────────┐
-       │   Muse AI    │ FastAPI Proxy (Port 18610)
-       └──────┬───────┘
-              │ Chrome DevTools Protocol (CDP over WebSocket)
-              ▼
-       ┌──────────────┐
-       │   Chromium   │ Headless Browser (Isolated Context per Account)
-       └──────┬───────┘
-              │ HTTPS / WSS (hatch_sess + hatch_gw + datr)
-              ▼
-          muse.ai
-```
+## Table of contents
 
----
-
-## Technical Highlights
-
-- **OpenAI Wire Compatibility**: Direct drop-in for OpenAI SDKs, LangChain, LobeChat, NextChat, Cherry Studio, and autonomous coding agents.
-- **Native 9Router Provider**: Ships with `scripts/connect_9router.py` to auto-register model routes directly into 9Router's SQLite database (`~/.9router/db/data.sqlite`).
-- **Resilient Cookie Injection**: Automatically URL-decodes percent-encoded cookie tokens (`%3A` -> `:`) and registers sessions across dual-domain scopes (`.muse.ai` and `muse.ai`) via CDP.
-- **Meta Edge Proxy Compliance**: Supports `datr` cookie passing to prevent device-integrity redirects on Meta infrastructure.
-- **Account Pooling & Failover**: Multi-account scheduling (`affinity`, `lru`, `round_robin`), concurrency limits, automatic error cooldown, and transparent retries.
-- **Deterministic Offline Testing**: 100% offline test suite powered by `MockDriver` (23 passed in < 0.5s).
+- [Key features](#key-features)
+- [Tech stack](#tech-stack)
+- [Prerequisites](#prerequisites)
+- [Getting started](#getting-started)
+- [Account setup](#account-setup)
+- [Usage](#usage)
+- [Endpoints](#endpoints)
+- [Models and aliases](#models-and-aliases)
+- [Configuration reference](#configuration-reference)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
+- [Security notes](#security-notes)
+- [Limitations and roadmap](#limitations-and-roadmap)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
-## Quickstart
+## Key features
 
-### 1. Installation
+- **OpenAI wire compatibility** — drop-in replacement for OpenAI SDKs and any client
+  that speaks `/v1/chat/completions`. Streaming SSE and buffered JSON.
+- **Driver abstraction** — routes never touch the browser. Three drivers ship today:
+  `mock` (offline echo, used by the test suite), `browser` (headless Chromium over
+  CDP), and `http` (direct protocol, scaffolded).
+- **Account pool** — multiple muse.ai accounts with `affinity`, `lru`, or
+  `round_robin` scheduling, per-account concurrency limits, cooldown on quota
+  errors, and transparent failover (up to `MUSE2API_MAX_FAILOVER` retries).
+- **Cookie injection that survives the edge proxy** — percent-encoded tokens are
+  URL-decoded and registered for both `.muse.ai` and `muse.ai` scopes; the `datr`
+  cookie is passed through so Meta's device-integrity redirect does not fire.
+- **Image and video generation** — text-to-image, image-to-video with a first frame,
+  plus asynchronous video tasks with progress polling.
+- **9Router hook** — `scripts/connect_9router.py` registers the provider and model
+  routes directly into 9Router's SQLite database.
+- **Deterministic offline tests** — the whole suite runs on `MockDriver`, no network,
+  no browser.
 
-Requires Python 3.10+ and a local Chromium or Google Chrome binary.
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Language | Python 3.10+ |
+| HTTP framework | FastAPI + Uvicorn |
+| Schemas / settings | Pydantic 2 + pydantic-settings |
+| Browser automation | Headless Chromium via Chrome DevTools Protocol (`websockets`) |
+| Upstream HTTP | `httpx` |
+| Tests | `pytest` + `pytest-asyncio` (23 tests, ~1 s, 100% offline) |
+| Lint / format | `ruff` |
+| Packaging | Hatchling (`pip install -e .`) |
+| CI | GitHub Actions, Python 3.10 + 3.12 |
+
+## Prerequisites
+
+- **Python 3.10 or newer** (`python --version`).
+- **Google Chrome or Chromium.** The browser driver launches its own instance with
+  `--remote-debugging-port`; you do not need to start it yourself.
+  - Auto-detection covers Linux (`chromium`, `chromium-browser`, `google-chrome`,
+    `/usr/bin/chromium`, `/snap/bin/chromium`) and macOS
+    (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`).
+  - **Windows and any custom install: set `MUSE2API_CHROMIUM_PATH` explicitly**, e.g.
+    ```ini
+    MUSE2API_CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
+    ```
+- **An active muse.ai account** with access to the personal agent, and the ability to
+  read its cookies from a browser you are logged into.
+- *(Optional)* [9Router](https://github.com/9router/9router) if you want the multi-model
+  gateway integration.
+
+## Getting started
+
+### 1. Clone
 
 ```bash
 git clone https://github.com/d4ncboz/museai.git
 cd museai
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
 ```
 
-### 2. Configuration
+### 2. Create a virtual environment
 
-Copy the example environment configuration:
+```bash
+python -m venv .venv
+
+# macOS / Linux
+source .venv/bin/activate
+
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+# Windows (cmd)
+.venv\Scripts\activate.bat
+```
+
+With [uv](https://docs.astral.sh/uv/) instead:
+
+```bash
+uv venv .venv
+uv pip install -e ".[dev]" --python .venv/Scripts/python.exe   # Windows
+uv pip install -e ".[dev]" --python .venv/bin/python           # macOS / Linux
+```
+
+### 3. Install the package
+
+```bash
+pip install -e ".[dev]"
+```
+
+This installs the `museai` console script and the runtime dependencies
+(FastAPI, Uvicorn, Pydantic, httpx, websockets) plus dev extras (pytest, ruff).
+
+### 4. Configure
 
 ```bash
 cp .env.example .env
 ```
 
-`.env.example` ships with `MUSE2API_DRIVER=mock` (offline echo driver, no browser needed).
-Switch to `browser` once muse.ai account cookies are registered. Relevant settings:
+`.env.example` ships with `MUSE2API_DRIVER=mock`: the service starts and answers
+without a browser or an account. **All settings use the `MUSE2API_` prefix** — values
+named `MUSEAI_*` are ignored.
+
+Minimum edits worth making before first run:
 
 ```ini
 MUSE2API_DRIVER=browser
-MUSE2API_HOST=127.0.0.1
-MUSE2API_PORT=18610
 MUSE2API_API_KEY=sk-museai-local-key
 MUSE2API_ADMIN_KEY=sk-museai-admin-key
-MUSE2API_POOL_STRATEGY=affinity
-MUSE2API_KEEPALIVE_ENABLED=true
+MUSE2API_CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe   # Windows only
 ```
 
-*(Note: Chrome executable is auto-detected on macOS `/Applications/Google Chrome.app` and Linux `/usr/bin/chromium`. Set `MUSE2API_CHROMIUM_PATH` if using a custom path).*
-
-### 3. Run the Service
+### 5. Run
 
 ```bash
 python -m museai
 ```
 
-The server binds to `http://127.0.0.1:18610`.
+Expected output:
 
----
+```text
+museai listening on http://127.0.0.1:18610  (driver=browser)
+INFO     museai.accounts.pool: loaded 0 account(s)
+INFO     museai.drivers.browser.chromium: launching Chromium: ...
+INFO     museai.drivers.browser.driver: browser driver ready
+INFO     museai: museai 0.1.0 ready (driver=browser)
+```
 
-## Authentication & Account Setup
+The equivalent console script is `museai`, installed by `pip install -e .`.
 
-### 1. Account Registration
+### 6. Verify
 
-An active [muse.ai](https://muse.ai) account is required. If you do not have an account yet, follow the step-by-step registration guide here:
-- **Registration Guide**: [Telegram @bozdrop/8447](https://t.me/bozdrop/8447)
+```bash
+curl http://127.0.0.1:18610/healthz
+# {"ok":true,"version":"0.1.0"}
 
-### 2. Export Session Cookies
+curl http://127.0.0.1:18610/readyz
+# {"ready":false,"driver":{"driver":"browser","ok":true,"tabs":0},
+#  "accounts":{"total":0,"available":0,"invalid":0,"inflight":0}}
 
-Export your session cookies from an active [muse.ai](https://muse.ai) browser session (DevTools `F12` ──> `Application` ──> `Cookies` ──> `https://muse.ai`):
+curl -H "Authorization: Bearer sk-museai-local-key" http://127.0.0.1:18610/v1/models
+```
 
-- `hatch_sess`: Session authentication token
-- `hatch_gw`: Gateway routing cookie
-- `hatch_native_auth_device`: Registered device UUID
-- `hatch_vml`: Workspace lease token *(optional/dynamic)*
-- `datr`: Meta device verification cookie *(recommended)*
+`ready` is `false` until at least one account is available (a driver that does not
+require accounts, such as `mock`, is ready immediately). Auth, models and error
+plumbing can be exercised in `mock` mode before you paste any real cookie.
 
-### Import via Admin API
+## Account setup
+
+`muse.ai` authenticates with browser cookies. Export them from a browser session
+already logged in to `https://muse.ai` (DevTools → `Application` → `Cookies` →
+`https://muse.ai`, or a cookie-exporter extension → JSON export).
+
+| Cookie | Required | Purpose |
+|---|---|---|
+| `hatch_sess` | yes | Session authorization token |
+| `hatch_gw` | yes | Cluster gateway routing cookie |
+| `hatch_native_auth_device` | yes | Device fingerprint UUID |
+| `hatch_vml` | recommended | Workspace lease token; short-lived, minted per thread |
+| `datr` | recommended | Meta device-integrity cookie, prevents login-page redirects |
+
+Notes:
+
+- Values may be percent-encoded (`v1%3A...`). This is fine — the driver URL-decodes
+  them before injecting via CDP.
+- All five cookies are served `HttpOnly`, so `document.cookie` in the browser console
+  returns nothing useful — verified against a live export, `datr` included. Use the
+  DevTools `Application` panel or a cookie-exporter extension instead of a console
+  snippet.
+- Cookies are persisted in plaintext in `data/accounts.json` (see
+  [Security notes](#security-notes)).
+
+### Import via admin API
 
 ```bash
 curl -X POST http://127.0.0.1:18610/admin/accounts \
   -H "Authorization: Bearer sk-museai-admin-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "label": "primary-account",
+    "label": "primary",
     "cookies": {
       "hatch_sess": "...",
       "hatch_gw": "...",
       "hatch_native_auth_device": "...",
       "hatch_vml": "...",
       "datr": "..."
-    }
+    },
+    "cookie_expires": {"hatch_sess": 1797350030}
   }'
 ```
 
-Alternatively, use the helper script to convert raw Netscape / DevTools JSON exports:
+`cookie_expires` (optional) maps cookie name to a Unix expiry timestamp. The response
+echoes `missing_cookies`; an empty list means the session cookie set is complete.
+Cookie values are always masked in responses (`e6f6...XP3g`).
+
+### Convert an export with the helper script
+
+`scripts/extract_cookies.py` accepts a Chrome DevTools / Cookie-Editor JSON array, a
+Netscape `cookies.txt`, or a raw `name=value; name=value` header string:
 
 ```bash
-python scripts/extract_cookies.py exported_cookies.txt --label primary-account --out account.json
+python scripts/extract_cookies.py exported_cookies.json --label primary --out account.json
 curl -X POST http://127.0.0.1:18610/admin/accounts \
   -H "Authorization: Bearer sk-museai-admin-key" \
   -H "Content-Type: application/json" \
   -d @account.json
 ```
 
----
-
-## 9Router Multi-Model Gateway Hook
-
-To register `museai` into a local [9Router](https://github.com/9router/9router) instance:
+After importing, confirm the pool and the tab count:
 
 ```bash
-python scripts/connect_9router.py --port 18610 --api-key sk-museai-local-key --prefix muse
+curl -H "Authorization: Bearer sk-museai-admin-key" http://127.0.0.1:18610/admin/status
 ```
 
-Call the model through 9Router immediately:
+## Usage
 
-```bash
-curl -s -X POST http://127.0.0.1:20128/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "muse/muse-chat",
-    "messages": [{"role": "user", "content": "ping"}]
-  }'
-```
-
-Available model IDs routed by 9Router:
-- `muse/muse-chat`: Primary personal agent conversational model
-- `muse/gpt-4o`: OpenAI tooling alias
-- `muse/gpt-5`: High-reasoning alias
-- `muse/claude-sonnet-4`: Sonnet alias
-- `muse/muse-video`: Text / first-frame image-to-video
-
----
-
-## API Usage
-
-### Streaming Chat Completion (`curl`)
+### Streaming chat (curl)
 
 ```bash
 curl -N -X POST http://127.0.0.1:18610/v1/chat/completions \
@@ -179,64 +265,466 @@ curl -N -X POST http://127.0.0.1:18610/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "muse-chat",
+    "stream": true,
     "messages": [
       {"role": "system", "content": "You are a concise engineering assistant."},
       {"role": "user", "content": "Explain raft consensus in two sentences."}
-    ],
-    "stream": true
+    ]
   }'
 ```
 
-### Python SDK (`openai`)
+The stream is standard OpenAI SSE and ends with `data: [DONE]`.
+
+### Python SDK
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(
-    base_url="http://127.0.0.1:18610/v1",
-    api_key="sk-museai-local-key"
-)
+client = OpenAI(base_url="http://127.0.0.1:18610/v1", api_key="sk-museai-local-key")
 
 response = client.chat.completions.create(
     model="muse-chat",
     messages=[{"role": "user", "content": "Write a thread-safe singleton in Python"}],
-    stream=False
 )
-
 print(response.choices[0].message.content)
 ```
 
----
+### Images
+
+```bash
+curl -X POST http://127.0.0.1:18610/v1/images/generations \
+  -H "Authorization: Bearer sk-museai-local-key" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a red bicycle at golden hour", "n": 1, "response_format": "url"}'
+```
+
+`response_format` is `url` (media is written to `data/media/` and served from
+`/v1/media/{name}`) or `b64_json`.
+
+### Videos
+
+```bash
+# Dispatch a task
+curl -X POST http://127.0.0.1:18610/v1/videos \
+  -H "Authorization: Bearer sk-museai-local-key" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "ocean waves at sunrise", "duration": 5}'
+
+# Poll it
+curl -H "Authorization: Bearer sk-museai-local-key" \
+  http://127.0.0.1:18610/v1/videos/task_xxxxxxxxxxxxxxxx
+```
+
+`image` (or `input_reference`) accepts a first-frame image as a data URL, an
+`http(s)` URL, or a base64 string.
+
+### 9Router
+
+```bash
+python scripts/connect_9router.py --port 18610 --prefix muse
+```
+
+The API key defaults to `$MUSE2API_API_KEY` (fallback `sk-museai-local-key`); pass
+`--api-key` to override, and `--db` if 9Router does not live at
+`~/.9router/db/data.sqlite`. Then:
+
+```bash
+curl -s -X POST http://127.0.0.1:20128/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "muse/muse-chat", "messages": [{"role": "user", "content": "ping"}]}'
+```
 
 ## Endpoints
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/healthz` · `/readyz` | Service liveness and driver readiness checks |
-| `GET` | `/v1/models` | OpenAI-compliant model catalog and alias mapping |
-| `POST` | `/v1/chat/completions` | Multi-turn chat (streaming SSE & buffered JSON) |
-| `POST` | `/v1/images/generations` | Text-to-image synthesis |
-| `POST` | `/v1/videos` | Asynchronous video generation task dispatch |
-| `GET` | `/v1/videos/{id}` | Task status polling |
-| `GET/POST` | `/admin/accounts` | Account pool CRUD and session renewal |
-| `GET` | `/admin/status` | Real-time driver stats, tabs, and pool health |
+| Method | Route | Auth | Description |
+|---|---|---|---|
+| `GET` | `/healthz` | — | Liveness: `{"ok": true, "version": "..."}` |
+| `GET` | `/readyz` | — | Driver health + pool availability |
+| `GET` | `/v1/models` | API key | Model catalog and alias mapping |
+| `POST` | `/v1/chat/completions` | API key | Multi-turn chat, SSE or buffered |
+| `POST` | `/v1/images/generations` | API key | Text-to-image |
+| `POST` | `/v1/images/edits` | API key | `501` — not implemented |
+| `POST` | `/v1/videos` | API key | Dispatch an async video task |
+| `GET` | `/v1/videos/{task_id}` | API key | Poll task status, progress, result |
+| `GET` | `/v1/media/{name}` | — | Serve generated media (unguessable name) |
+| `POST` | `/v1/responses` | API key | `501` — reserved for the Responses API |
+| `GET` | `/admin/accounts` | Admin key | List accounts (cookies masked) |
+| `POST` | `/admin/accounts` | Admin key | Add an account |
+| `PATCH` | `/admin/accounts/{id}` | Admin key | Update label, enabled, cookies |
+| `DELETE` | `/admin/accounts/{id}` | Admin key | Remove an account |
+| `POST` | `/admin/accounts/{id}/reset` | Admin key | Clear cooldown/error state |
+| `POST` | `/admin/accounts/{id}/renew` | Admin key | Refresh cookies / wake the workspace |
+| `GET` | `/admin/status` | Admin key | Version, driver, capabilities, pool stats |
+| `GET` | `/admin/tasks` | Admin key | Recent tasks (`?limit=`) |
+| `POST` | `/admin/tasks/{id}/cancel` | Admin key | Cancel a background task |
 
----
+Errors use the OpenAI shape:
 
-## Development & Testing
-
-```bash
-# Run unit tests (MockDriver, zero external network calls)
-pytest
-
-# Code style & linting
-ruff check .
-ruff format .
+```json
+{"error": {"message": "no usable account in pool", "type": "server_error", "code": "no_account_available"}}
 ```
 
-See [AGENTS.md](AGENTS.md) for machine-readable architecture contracts, protocol framing, and contribution guidelines.
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid_request` | Bad payload, or a model of the wrong kind for the endpoint |
+| 401 | `invalid_api_key` | Missing/wrong bearer token |
+| 404 | `not_found` | Unknown account, task, or media name |
+| 429 | `upstream_quota_exhausted` | Account out of quota; it enters cooldown |
+| 501 | `not_implemented` | Reserved endpoint |
+| 502 | `upstream_error` / `upstream_auth_failed` / `upstream_refused` | Upstream failure; auth failure marks the account invalid |
+| 503 | `no_account_available` | Pool empty, all accounts busy, or all invalid |
+| 504 | `upstream_timeout` | First token / chat / image / video timeout |
 
----
+## Models and aliases
+
+Base models: `muse-chat` (chat), `muse-image` (image), `muse-video` (video).
+
+Aliases resolve to the nearest base model, so existing OpenAI tooling works unchanged:
+
+| Alias | Resolves to |
+|---|---|
+| `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-5`, `claude-sonnet-4`, `deepseek-chat` | `muse-chat` |
+| `dall-e-3`, `gpt-image-1` | `muse-image` |
+| `sora` | `muse-video` |
+
+An unknown model name falls back to the default of the requested kind; a known model
+of the wrong kind (e.g. `muse-video` on a chat request) is rejected with `400`.
+
+Sampling parameters (`temperature`, `top_p`, `max_tokens`, `tools`) are accepted for
+compatibility and ignored — muse.ai exposes no such controls.
+
+## Configuration reference
+
+All variables use the `MUSE2API_` prefix and can be set in `.env` or the environment.
+
+### Server and auth
+
+| Variable | Default | Description |
+|---|---|---|
+| `MUSE2API_HOST` | `127.0.0.1` | Bind address |
+| `MUSE2API_PORT` | `18610` | Bind port |
+| `MUSE2API_LOG_LEVEL` | `INFO` | Uvicorn/log level |
+| `MUSE2API_PUBLIC_BASE` | *(empty)* | External base URL used in media links; empty derives from the request |
+| `MUSE2API_API_KEY` | *(empty)* | Bearer key for `/v1/*`. If empty, generated once and stored in `data/api_key` |
+| `MUSE2API_ADMIN_KEY` | *(empty)* | Bearer key for `/admin/*`; falls back to the API key |
+
+### Storage and driver selection
+
+| Variable | Default | Description |
+|---|---|---|
+| `MUSE2API_DATA_DIR` | `data` | Accounts, tasks, media, browser profile |
+| `MUSE2API_DRIVER` | `mock` | `mock` \| `browser` \| `http` |
+| `MUSE2API_SITE_URL` | `https://muse.ai` | Upstream base URL |
+
+### Browser driver
+
+| Variable | Default | Description |
+|---|---|---|
+| `MUSE2API_CHROMIUM_PATH` | *(empty)* | Explicit Chrome/Chromium binary; required on Windows |
+| `MUSE2API_CDP_PORT` | `19210` | Local DevTools port (loopback only) |
+| `MUSE2API_HEADLESS` | `true` | Launch headless |
+| `MUSE2API_BROWSER_PROXY` | *(empty)* | Proxy for the browser only, e.g. `socks5://127.0.0.1:10808` |
+| `MUSE2API_BROWSER_PROFILE_DIR` | `data/browser-profile` | Chromium user-data dir |
+| `MUSE2API_PAGE_READY_TIMEOUT` | `45` | Seconds to wait for the page to hydrate |
+
+### Timeouts (seconds)
+
+| Variable | Default |
+|---|---|
+| `MUSE2API_CHAT_TIMEOUT` | `300` |
+| `MUSE2API_FIRST_TOKEN_TIMEOUT` | `45` |
+| `MUSE2API_IMAGE_TIMEOUT` | `240` |
+| `MUSE2API_VIDEO_TIMEOUT` | `600` |
+
+### Account pool
+
+| Variable | Default | Description |
+|---|---|---|
+| `MUSE2API_POOL_STRATEGY` | `affinity` | `affinity` \| `lru` \| `round_robin` |
+| `MUSE2API_POOL_ACQUIRE_TIMEOUT` | `60` | Seconds to wait for a free account |
+| `MUSE2API_ACCOUNT_MAX_CONCURRENCY` | `1` | In-flight requests per account |
+| `MUSE2API_ACCOUNT_COOLDOWN` | `120` | Cooldown after a retryable upstream error |
+| `MUSE2API_MAX_FAILOVER` | `2` | Retries on other accounts before surfacing the error |
+
+`affinity` pins a conversation hint (or user id) to the account that served it, so the
+hot page can be reused; `lru` picks the least recently used; `round_robin` cycles.
+
+### Session keepalive
+
+| Variable | Default | Description |
+|---|---|---|
+| `MUSE2API_KEEPALIVE_ENABLED` | `false` | Periodically renew session cookies upstream |
+| `MUSE2API_KEEPALIVE_INTERVAL` | `21600` | Renewal interval in seconds (6 h) |
+
+`hatch_sess` typically lives ~30 days and `hatch_vml` only a few days; enabling
+keepalive keeps a long-running deployment logged in.
+
+## Architecture
+
+```text
+OpenAI SDK / 9Router / Web client
+              │ HTTP (Bearer token)
+              ▼
+       ┌──────────────┐
+       │    museai    │ FastAPI proxy, default port 18610
+       └──────┬───────┘
+              │ Chrome DevTools Protocol (WebSocket, loopback)
+              ▼
+       ┌──────────────┐
+       │   Chromium   │ one process, one isolated browser context per account
+       └──────┬───────┘
+              │ HTTPS/WSS (hatch_sess + hatch_gw + datr)
+              ▼
+           muse.ai
+```
+
+### Directory structure
+
+```text
+src/museai/
+├── app.py                 # FastAPI factory, lifespan, error handlers
+├── config.py              # Pydantic settings (MUSE2API_ prefix)
+├── errors.py              # Exception hierarchy → HTTP + OpenAI error bodies
+├── log.py                 # Logging setup
+├── __main__.py            # `python -m museai` / `museai`
+├── api/
+│   ├── deps.py            # Bearer auth (constant-time), service accessors
+│   ├── schemas.py         # OpenAI-ish request models
+│   └── routes/            # health, models, chat, images, videos, media, admin, responses
+├── services/
+│   ├── container.py       # Wires settings, driver, pool, gateway, tasks, media
+│   ├── gateway.py         # Account lease + failover + streaming orchestration
+│   └── tasks.py           # Persistent background tasks (video)
+├── accounts/
+│   ├── model.py           # Account state: active / cooling / invalid
+│   ├── pool.py            # Scheduling strategies, concurrency, cooldown
+│   ├── store.py           # Atomic JSON persistence
+│   └── keepalive.py       # Periodic renew loop
+├── core/
+│   ├── models.py          # Model catalog + alias resolution
+│   ├── prompt.py          # Message flattening / follow-up detection
+│   └── media.py           # Media storage + image reference loading
+├── drivers/
+│   ├── base.py            # MuseDriver ABC and request/response types
+│   ├── registry.py        # Driver selection (lazy imports)
+│   ├── mock.py            # Offline driver for tests
+│   ├── browser/           # chromium.py, cdp.py, dom.py, driver.py
+│   └── http/              # direct-protocol driver (scaffold)
+└── upstream/
+    └── muse.py            # Upstream constants, cookie validation, session renewal
+```
+
+### Request lifecycle
+
+1. FastAPI validates the body (`api/schemas.py`) and the bearer token (`api/deps.py`).
+2. The route resolves the model (`core/models.py`) and flattens messages
+   (`core/prompt.py`).
+3. `services/gateway.py` leases an account from the pool — or, for account-less
+   drivers such as `mock`, uses an anonymous lease.
+4. The driver performs the upstream call. `BrowserDriver` reuses one tab per account
+   and opens a fresh thread when the conversation changes.
+5. Deltas flow back as SSE; on a retryable error before any text is emitted the
+   gateway fails over to another account.
+6. `Lease.fail()`/`release()` update account health and persist `data/accounts.json`.
+
+### Driver contract
+
+All upstream interaction goes through `drivers/base.py`:
+
+```python
+async def chat_stream(account, req) -> AsyncIterator[str]
+async def generate_image(account, req) -> list[MediaResult]
+async def generate_video(account, req, progress_cb) -> MediaResult
+async def renew_session(account) -> SessionInfo
+```
+
+`DriverCapabilities` advertises which of these a driver supports, so unsupported
+endpoints return `501` instead of failing deep inside the driver. Adding a driver means
+implementing this ABC and registering it in `drivers/registry.py`; HTTP routes never
+change.
+
+### Implementation notes worth preserving
+
+- Cookies must be URL-decoded before `Network.setCookie`, and registered for both
+  `.muse.ai` and `muse.ai`; skipping either breaks the session behind the edge proxy.
+- Readiness detection is locale-independent (input presence + hydration), because the
+  web client renders in the user's language.
+- One Chromium process, one `BrowserContext` per account: sessions never bleed.
+- The Chromium profile path is resolved to an absolute path — Chrome refuses a
+  relative `--user-data-dir` and exits with code 21.
+- No `--remote-allow-origins=*`: the loopback DevTools port has no authentication, so
+  a wildcard origin would let any web page drive it.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the condensed version and
+[AGENTS.md](AGENTS.md) for the machine-readable contract.
+
+## Development
+
+```bash
+pytest                 # whole suite, offline (MockDriver)
+pytest -q tests/test_api.py::test_chat_stream   # single test
+ruff check .           # lint
+ruff format .          # format
+```
+
+Expected: `23 passed` in roughly a second, and a clean `ruff` run. The suite uses
+`MockDriver` and `TestClient`; it never opens a browser or touches muse.ai.
+
+CI (`.github/workflows/ci.yml`) runs `pip install -e '.[dev]'`, `ruff check .` and
+`pytest -q` on Python 3.10 and 3.12.
+
+Adding a route: define the schema in `api/schemas.py`, the handler in
+`api/routes/<name>.py`, include the router in `api/routes/__init__.py`, and keep
+upstream work in the driver layer.
+
+## Deployment
+
+### Docker
+
+```bash
+docker build -t museai .
+docker run --rm -p 127.0.0.1:18610:18610 \
+  -e MUSE2API_DRIVER=browser \
+  -e MUSE2API_API_KEY=sk-museai-local-key \
+  -e MUSE2API_ADMIN_KEY=sk-museai-admin-key \
+  -v "$PWD/data:/app/data" \
+  museai
+```
+
+The image installs Chromium, runs as an unprivileged `muse` user, and stores state in
+`/app/data`.
+
+### Docker Compose
+
+```bash
+cp .env.example .env   # edit keys, set MUSE2API_DRIVER=browser
+docker compose up -d --build
+docker compose logs -f
+```
+
+Compose publishes the port on loopback only (`127.0.0.1:18610:18610`) and mounts
+`./data` into the container. Keep the admin key private: `/admin/*` can add, replace
+and delete accounts.
+
+### Bare metal
+
+```bash
+git pull
+pip install -e .
+MUSE2API_DRIVER=browser python -m museai
+```
+
+The service holds no database; state is `data/accounts.json`, `data/tasks.json` and
+`data/media/`. Back up `data/` to preserve accounts and pending tasks.
+
+## Troubleshooting
+
+### `Chromium did not expose a DevTools endpoint`
+
+Chrome failed to start or never bound the debug port.
+
+1. Set an explicit binary: `MUSE2API_CHROMIUM_PATH`.
+2. Make sure the profile directory is writable and that no other process owns
+   `MUSE2API_CDP_PORT` (default `19210`). Change the port if it is taken.
+3. `RC=21` on Windows means Chrome rejected the user-data dir; this build resolves the
+   path automatically, so a stale checkout without that fix is the usual cause.
+
+### `401 invalid_api_key`
+
+The bearer token does not match `MUSE2API_API_KEY`. If you left it empty, the key was
+generated into `data/api_key` — read it from there. `x-api-key:` works as well as
+`Authorization: Bearer`.
+
+### `503 no_account_available`
+
+The pool is empty, all accounts are busy (wait or raise
+`MUSE2API_ACCOUNT_MAX_CONCURRENCY`), or every account is `invalid`/`cooling`. Check
+`/admin/status`.
+
+### `502 upstream_auth_failed`
+
+muse.ai rejected the session. Re-export `hatch_sess`/`hatch_gw`/
+`hatch_native_auth_device` from a browser that is logged in and `PATCH` the account.
+Expired cookies are the most common cause.
+
+### `502 upstream_refused`
+
+Upstream answered but did not produce what was asked (for example text instead of an
+image). Retrying the same prompt usually gives the same result — rephrase it.
+
+### `504 upstream_timeout`
+
+Slow or sleeping workspace. Raise `MUSE2API_FIRST_TOKEN_TIMEOUT` /
+`MUSE2API_CHAT_TIMEOUT`, or `POST /admin/accounts/{id}/renew` to wake the VM.
+
+### Empty or partial stream
+
+Clients that buffer SSE show nothing until the stream ends. Use `curl -N`, or disable
+buffering in the client/proxy. Once any text has been emitted the gateway cannot fail
+over mid-stream — the error is surfaced in the stream.
+
+### muse.ai unreachable from this host
+
+Set `MUSE2API_BROWSER_PROXY` (browser traffic only) and, if needed, the standard
+`HTTPS_PROXY` for the Python-side session renewal calls.
+
+### Windows: Chrome not found automatically
+
+Auto-detection only covers Linux and macOS paths; set `MUSE2API_CHROMIUM_PATH` to the
+full path of `chrome.exe`.
+
+## Security notes
+
+- **The service is a credential holder.** `data/accounts.json` stores session cookies
+  in plaintext; `data/media/` stores generated content. Both live under
+  `MUSE2API_DATA_DIR` (`data/` by default) and are git-ignored. Do not sync, back up to
+  a public location, or share that directory. `chmod 0600` is applied on POSIX
+  systems; it is a no-op on Windows, where the file inherits the directory ACL.
+- **Bind to loopback.** The default host is `127.0.0.1`. Exposing `/admin/*` to a
+  network lets anyone with the admin key add, replace, and delete accounts.
+- **The DevTools port is unauthenticated.** Chromium runs with
+  `--remote-debugging-port` on loopback; any local process can attach to it and read
+  the account cookies. Do not leave the service running when it is not needed. The
+  wildcard origin (`--remote-allow-origins=*`) was removed so browser pages cannot
+  attach, but local processes are still trusted.
+- **`/v1/media/{name}` is public by design** — media URLs must be embeddable in
+  clients that cannot send auth headers. Names are random; the endpoint is a bearer
+  capability, treat a URL as a secret.
+- **Image references are fetched server-side.** `/v1/chat/completions`, `/v1/videos`
+  and `/v1/images/*` accept `http(s)` image URLs and download them, so an untrusted
+  caller could make the server fetch internal addresses. Keep the service on loopback
+  or behind a trusted network.
+- **Upstream terms of service.** Automating a personal web session may violate
+  muse.ai's terms and can get the account suspended. Use an account you are willing to
+  lose.
+- Session cookies expire (`hatch_sess` ~30 days, `hatch_vml` a few days). Logging out
+  of muse.ai invalidates them immediately; delete the account from the pool and the
+  entry from `data/accounts.json` when rotating.
+
+## Limitations and roadmap
+
+Not implemented today, tracked in [TODO.md](TODO.md):
+
+- `/v1/responses` and `/v1/images/edits` return `501`.
+- Tool/function calling, `temperature`, `top_p`, and `max_tokens` are accepted but
+  ignored (the upstream web client exposes no such controls).
+- The `http` driver is a scaffold; `browser` is the working path.
+- Quota lookup, media cleanup, and a web admin UI are not built.
+- No built-in rate limiting beyond per-account concurrency: put it behind a proxy if
+  you expose it to more than yourself.
+
+## Contributing
+
+1. Branch from `main`.
+2. Keep upstream-specific knowledge in `drivers/` or `upstream/` — routes must stay
+   driver-agnostic.
+3. Add or update a `MockDriver`-based test for behavior changes; the suite must stay
+   offline.
+4. `ruff check .` and `pytest` must pass before opening a PR.
+5. Preserve the implementation notes in [Architecture](#implementation-notes-worth-preserving);
+   each one corresponds to a bug that already cost debugging time.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).
 
 ## License
 

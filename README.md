@@ -158,11 +158,17 @@ named `MUSEAI_*` are ignored.
 Minimum edits worth making before first run:
 
 ```ini
-MUSE2API_DRIVER=browser
+MUSE2API_DRIVER=http
 MUSE2API_API_KEY=sk-museai-local-key
 MUSE2API_ADMIN_KEY=sk-museai-admin-key
-MUSE2API_CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe   # Windows only
 ```
+
+`http` is the fork driver: no Chromium, one Noise/WebSocket channel per request, ~5-15 s
+per answer. Switch to `browser` only when you need image or video generation; that mode
+also wants `MUSE2API_CHROMIUM_PATH`.
+
+A variable already exported in the shell beats `.env`. If the dashboard shows the wrong
+driver, check `echo $env:MUSE2API_DRIVER` (PowerShell) before editing the file.
 
 ### 5. Run
 
@@ -464,7 +470,7 @@ All variables use the `MUSE2API_` prefix and can be set in `.env` or the environ
 | Variable | Default | Description |
 |---|---|---|
 | `MUSE2API_DATA_DIR` | `data` | Accounts, tasks, media, browser profile, `museai.db` |
-| `MUSE2API_DRIVER` | `mock` | `mock` \| `browser` \| `http` |
+| `MUSE2API_DRIVER` | `mock` | `mock` \| `browser` \| `http`; process env wins over `.env` |
 | `MUSE2API_SITE_URL` | `https://muse.ai` | Upstream base URL |
 | `MUSE2API_ACCOUNT_STORE` | `json` | `json` (files) or `sqlite` (accounts + keys + usage) |
 | `MUSE2API_RATE_LIMIT_RPM` | `0` | Requests per minute per API key; `0` disables |

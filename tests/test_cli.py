@@ -12,6 +12,8 @@ import sys
 from museai.cli import (
     DashboardState,
     RingHandler,
+    _console,
+    _read_cookie_input,
     _startup_failure,
     apply_overrides,
     build_parser,
@@ -151,3 +153,19 @@ def test_doctor_fails_until_an_account_exists(settings, monkeypatch, tmp_path, c
     assert code == 1
     out = capsys.readouterr().out
     assert "accounts" in out and "muse2api setup" in out
+
+
+def test_cookie_prompt_accepts_a_path(tmp_path, monkeypatch):
+    export = tmp_path / "export.json"
+    export.write_text('{"hatch_sess": "s"}', encoding="utf-8")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda _prompt: str(export))
+    text = _read_cookie_input(build_parser().parse_args(["setup"]), _console())
+    assert text == '{"hatch_sess": "s"}'
+
+
+def test_cookie_prompt_accepts_pasted_json(monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda _prompt: '{"hatch_gw": "g"}')
+    text = _read_cookie_input(build_parser().parse_args(["setup"]), _console())
+    assert text == '{"hatch_gw": "g"}'

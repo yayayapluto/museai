@@ -157,3 +157,6 @@ constraints when changing the codebase:
   with the probe, never hand-write them.
 - Multi-tenant mode (`MUSE2API_ACCOUNT_STORE=sqlite`) stores hashed API keys only —
   plaintext keys are returned once by `POST /admin/keys`.
+- Onboarding lives in `src/museai/onboarding.py` (`muse2api setup`, `muse2api doctor`)
+  and `ONBOARDING.md`. When you add a failure mode, add a `doctor_checks` row with its
+  fix and the matching troubleshooting row — the doctor table is the contract.

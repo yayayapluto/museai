@@ -16,7 +16,7 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "httpx[socks]>=0.27",
-    "rich>=13.0",  # `muse2ai start` dashboard
+    "rich>=13.0",  # `muse2api start` dashboard
 ]
 
 [project.optional-dependencies]
@@ -34,7 +34,7 @@ dev = [
 
 [project.scripts]
 museai = "museai.__main__:main"
-muse2ai = "museai.cli:main"
+muse2api = "museai.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/museai"]

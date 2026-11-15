@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import socket
 
 from museai.cli import (
     DashboardState,
     RingHandler,
+    _startup_failure,
     apply_overrides,
     build_parser,
     info_lines,
     masked,
+    port_available,
 )
 
 
@@ -63,3 +67,29 @@ def test_ring_handler_keeps_last_records():
         logger.info("line %d", index)
     logger.removeHandler(handler)
     assert [record.getMessage() for record in handler.records] == ["line 2", "line 3", "line 4"]
+
+
+def test_port_available_detects_a_busy_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen(1)
+        host, port = busy.getsockname()
+        assert port_available(host, port) is False
+    assert port_available(host, port) is True
+
+
+def test_startup_failure_explains_a_taken_port():
+    async def make(exc: BaseException):
+        future = asyncio.get_running_loop().create_future()
+        future.set_exception(exc)
+        return future
+
+    assert _startup_failure(asyncio.run(make(SystemExit(3)))) == "address already in use"
+    assert "boom" in str(_startup_failure(asyncio.run(make(RuntimeError("boom")))))
+
+
+def test_startup_failure_is_none_while_running():
+    async def make():
+        return asyncio.get_running_loop().create_future()
+
+    assert _startup_failure(asyncio.run(make())) is None

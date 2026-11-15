@@ -1,8 +1,8 @@
-"""``muse2ai`` command line: start the proxy behind a small Rich dashboard.
+"""``muse2api`` command line: start the proxy behind a small Rich dashboard.
 
-    muse2ai start                 # dashboard + server on the configured host/port
-    muse2ai start --no-ui         # plain logs (containers, systemd)
-    muse2ai start --port 18611 --driver http
+    muse2api start                 # dashboard + server on the configured host/port
+    muse2api start --no-ui         # plain logs (containers, systemd)
+    muse2api start --port 18611 --driver http
 
 The dashboard polls the same objects the admin API exposes (driver health, account
 stats) plus an in-memory log ring, so what you see is the live process, not a guess.
@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import socket
 import sys
 import time
 from collections.abc import Sequence
@@ -60,7 +61,7 @@ class DashboardState:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="muse2ai", description="muse.ai → OpenAI-compatible proxy")
+    ap = argparse.ArgumentParser(prog="muse2api", description="muse.ai → OpenAI-compatible proxy")
     sub = ap.add_subparsers(dest="command", required=True)
 
     start = sub.add_parser("start", help="run the server")
@@ -189,10 +190,32 @@ def render_dashboard(state: DashboardState, show_keys: bool) -> Any:
             Text("log", style="bold"),
             log,
         ),
-        title="[bold]muse2ai[/bold]",
+        title="[bold]muse2api[/bold]",
         subtitle="Ctrl+C to stop",
         border_style="cyan",
     )
+
+
+def port_available(host: str, port: int) -> bool:
+    """Fail fast with a readable message instead of letting uvicorn sys.exit(3)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _startup_failure(task: asyncio.Task[Any]) -> str | None:
+    """Return a message when the server task died before/while serving."""
+    if not task.done():
+        return None
+    exc = task.exception()
+    if exc is None:
+        return None
+    if isinstance(exc, SystemExit):
+        return "address already in use"
+    return f"{type(exc).__name__}: {exc}"
 
 
 async def serve(settings: Settings, *, show_ui: bool, show_keys: bool) -> int:
@@ -219,14 +242,18 @@ async def serve(settings: Settings, *, show_ui: bool, show_keys: bool) -> int:
             while not server.should_exit and not task.done():
                 live.update(render_dashboard(state, show_keys))
                 await asyncio.sleep(0.25)
-        if task.done():
-            task.result()
+        failure = _startup_failure(task)
+        if failure:
+            return 1
     except (KeyboardInterrupt, asyncio.CancelledError):
         server.should_exit = True
     finally:
         server.should_exit = True
-        with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=10)
+        if not task.done():
+            with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+                await asyncio.wait_for(task, timeout=10)
+        elif task.exception() is not None:
+            task.exception()  # consumed: reported by the caller
     return 0
 
 
@@ -236,6 +263,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     settings = apply_overrides(get_settings(), args)
     setup_logging(settings.log_level)
+    if not port_available(settings.host, settings.port):
+        print(
+            f"port {settings.port} on {settings.host} is already in use — another instance is "
+            f"probably running. Stop it, or pick another port with "
+            f"`muse2api start --port {settings.port + 1}`.",
+            file=sys.stderr,
+        )
+        return 1
     try:
         return asyncio.run(serve(settings, show_ui=not args.no_ui, show_keys=args.show_keys))
     except KeyboardInterrupt:
@@ -243,8 +278,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OSError as exc:
         print(f"cannot start on {settings.host}:{settings.port}: {exc}", file=sys.stderr)
         return 1
-    except SystemExit as exc:  # uvicorn exits this way when the port is taken
-        return int(exc.code or 0)
+    except SystemExit as exc:  # uvicorn exits this way when the bind fails
+        code = exc.code or 0
+        if code:
+            print(f"server failed to start (uvicorn exit {code}); see the log above", file=sys.stderr)
+        return int(code)
 
 
 if __name__ == "__main__":  # pragma: no cover

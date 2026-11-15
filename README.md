@@ -167,7 +167,30 @@ MUSE2API_CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe   #
 ### 5. Run
 
 ```bash
-python -m museai
+muse2ai start
+```
+
+That is the recommended entry point: it starts the server and keeps a live Rich
+dashboard on screen — URL, version and driver, uptime, masked keys, data dir, account
+pool stats, the endpoint map, and the last log lines.
+
+```text
+╭───────────────────────── muse2ai ─────────────────────────╮
+│ URL        http://127.0.0.1:18610                         │
+│ Version    0.1.0 (driver=http)                            │
+│ Uptime     00:01:07                                       │
+│ API key    sk-mus…-key                                    │
+│ Admin key  sk-mus…-key  stored in data\api_key            │
+│ Store      json                                           │
+│ Accounts   1 total · 1 available · 0 invalid · 0 in flight │
+╰──────────────────────── Ctrl+C to stop ───────────────────╯
+```
+
+Flags: `--host`, `--port`, `--driver {mock,browser,http}`, `--show-keys`, `--no-ui`
+(plain logs, for containers). Without the dashboard:
+
+```bash
+python -m museai          # same server, plain output
 ```
 
 Expected output:

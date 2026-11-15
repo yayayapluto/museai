@@ -131,3 +131,21 @@ def test_client_snippets_carry_the_real_endpoint(settings):
     assert f"http://{settings.host}:{settings.port}/v1" in text
     assert "sk-test" in text
     assert "/v1/chat/completions" in text
+
+
+def test_env_conflicts_report_a_shell_override(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("MUSE2API_API_KEY=from-file\n", encoding="utf-8")
+    monkeypatch.setenv("MUSE2API_API_KEY", "from-shell-long-value")
+    conflicts = dict((key, (shell, env)) for key, shell, env in onboarding.env_conflicts())
+    _, env_value = conflicts["MUSE2API_API_KEY"]
+    assert env_value == "from-file"
+
+
+def test_doctor_flags_the_override(settings, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("MUSE2API_DRIVER=http\n", encoding="utf-8")
+    settings.driver = "http"
+    monkeypatch.setenv("MUSE2API_API_KEY", "sk-someone-elses-key")
+    rows = onboarding.doctor_checks(settings, [])
+    assert any(row.name == "env override" and not row.ok for row in rows)

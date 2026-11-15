@@ -351,9 +351,11 @@ async def run_setup(settings: Settings, args: argparse.Namespace) -> int:
     _rule(console, "muse2api setup")
     action = onboarding.write_env_driver(driver)
     console.print(f".env  {'created' if action == 'created' else action}: driver={driver}")
-    conflict = onboarding.driver_conflict(driver)
-    if conflict:
-        console.print(f"[yellow]note[/yellow] {conflict}")
+    for key, shell_value, env_value in onboarding.env_conflicts():
+        console.print(
+            f"[yellow]note[/yellow] {key}={shell_value} from your shell overrides "
+            f".env ({env_value}) — the server and these snippets will disagree"
+        )
 
     text = _read_cookie_input(args, console)
     imported = False

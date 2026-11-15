@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
 import socket
 import sys
 import time
@@ -27,6 +28,8 @@ from . import __version__
 from .app import create_app
 from .config import Settings, get_settings
 from .log import setup_logging
+
+log = logging.getLogger(__name__)
 
 LOG_BUFFER = 200
 """Log records kept for the dashboard."""
@@ -286,6 +289,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     settings = apply_overrides(get_settings(), args)
     setup_logging(settings.log_level)
+    log.info(
+        "config: driver=%s data_dir=%s cwd=%s", settings.driver, settings.data_dir, os.getcwd()
+    )
     if not port_available(settings.host, settings.port):
         print(
             f"port {settings.port} on {settings.host} is already in use — another instance is "

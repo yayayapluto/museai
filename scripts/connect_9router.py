@@ -85,7 +85,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Connect museai API to 9Router Gateway")
     parser.add_argument("--db", default=DEFAULT_DB, help=f"Path to 9Router database (default: {DEFAULT_DB})")
     parser.add_argument("--port", type=int, default=18610, help="museai service port (default: 18610)")
-    parser.add_argument("--api-key", default="sk-boz-muse-api-key", help="museai API key (default: sk-boz-muse-api-key)")
+    parser.add_argument("--api-key", default=os.environ.get("MUSE2API_API_KEY", "sk-museai-local-key"), help="museai API key (default: $MUSE2API_API_KEY)")
     parser.add_argument("--prefix", default="muse", help="Model prefix in 9Router (default: muse)")
     args = parser.parse_args()
 

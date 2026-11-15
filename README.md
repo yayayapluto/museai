@@ -132,14 +132,14 @@ With [uv](https://docs.astral.sh/uv/) instead:
 
 ```bash
 uv venv .venv
-uv pip install -e ".[dev]" --python .venv/Scripts/python.exe   # Windows
-uv pip install -e ".[dev]" --python .venv/bin/python           # macOS / Linux
+uv pip install -e ".[http,dev]" --python .venv/Scripts/python.exe   # Windows
+uv pip install -e ".[http,dev]" --python .venv/bin/python           # macOS / Linux
 ```
 
 ### 3. Install the package
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[http,dev]"
 ```
 
 This installs the `museai` console script and the runtime dependencies
@@ -621,7 +621,7 @@ ruff format .          # format
 Expected: `23 passed` in roughly a second, and a clean `ruff` run. The suite uses
 `MockDriver` and `TestClient`; it never opens a browser or touches muse.ai.
 
-CI (`.github/workflows/ci.yml`) runs `pip install -e '.[dev]'`, `ruff check .` and
+CI (`.github/workflows/ci.yml`) runs `pip install -e '.[http,dev]'   # [http] = gateway driver deps`, `ruff check .` and
 `pytest -q` on Python 3.10 and 3.12.
 
 Adding a route: define the schema in `api/schemas.py`, the handler in

@@ -149,3 +149,27 @@ def test_doctor_flags_the_override(settings, tmp_path, monkeypatch):
     monkeypatch.setenv("MUSE2API_API_KEY", "sk-someone-elses-key")
     rows = onboarding.doctor_checks(settings, [])
     assert any(row.name == "env override" and not row.ok for row in rows)
+
+
+def test_read_clipboard_returns_text(monkeypatch):
+    monkeypatch.setattr(onboarding.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        onboarding.subprocess,
+        "run",
+        lambda *a, **k: onboarding.subprocess.CompletedProcess(a, 0, "[{\"name\": \"x\"}]"),
+    )
+    assert onboarding.read_clipboard().startswith("[")
+
+
+def test_read_clipboard_survives_a_missing_tool(monkeypatch):
+    monkeypatch.setattr(onboarding.shutil, "which", lambda name: name)
+    monkeypatch.setattr(
+        onboarding.subprocess, "run", lambda *a, **k: onboarding.subprocess.CompletedProcess(a, 1)
+    )
+    assert onboarding.read_clipboard() == ""
+
+    def boom(*_a, **_k):
+        raise OSError("clipboard tool missing")
+
+    monkeypatch.setattr(onboarding.subprocess, "run", boom)
+    assert onboarding.read_clipboard() == ""

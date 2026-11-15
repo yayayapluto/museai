@@ -191,10 +191,14 @@ def read_clipboard() -> str:
     if not shutil.which(command[0]):
         return ""
     try:
-        done = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+        # Windows clipboards routinely hold non-UTF-8 (screenshots, ANSI apps); decoding
+        # must not raise, or setup dies before it can tell the user anything.
+        done = subprocess.run(
+            command, capture_output=True, encoding="utf-8", errors="replace", timeout=10, check=False
+        )
     except (OSError, subprocess.TimeoutExpired):
         return ""
-    return done.stdout if done.returncode == 0 else ""
+    return (done.stdout or "") if done.returncode == 0 else ""
 
 
 async def verify_cookies(settings: Settings, cookies: dict[str, str]) -> tuple[bool, str]:

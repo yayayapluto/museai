@@ -21,6 +21,8 @@ dependencies = [
 [project.optional-dependencies]
 # Only the Chromium driver (drivers/browser) needs websockets.
 browser = ["websockets>=13.0"]
+# The http driver talks the gateway protocol: WebSocket + Noise XX.
+http = ["websockets>=13.0", "noiseprotocol>=0.3"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

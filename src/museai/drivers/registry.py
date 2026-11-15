@@ -22,7 +22,12 @@ def create_driver(settings: Settings) -> MuseDriver:
 
         return BrowserDriver(settings)
     if settings.driver == "http":
-        from .http.driver import HttpDriver
+        try:
+            from .http.driver import HttpDriver
+        except ImportError as exc:  # websockets + noiseprotocol live in the [http] extra
+            raise ConfigError(
+                "http driver requires extra dependencies: pip install 'museai[http]'"
+            ) from exc
 
         return HttpDriver(settings)
     raise ValueError(f"unknown driver: {settings.driver}")

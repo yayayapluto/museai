@@ -32,6 +32,7 @@ OpenAI SDKs, LangChain, LobeChat, NextChat, Cherry Studio, or 9Router.
 - [Models and aliases](#models-and-aliases)
 - [Configuration reference](#configuration-reference)
 - [Architecture](#architecture)
+- [Gateway protocol](docs/protocol.md)
 - [Development](#development)
 - [Deployment](#deployment)
 - [Troubleshooting](#troubleshooting)
@@ -45,10 +46,18 @@ OpenAI SDKs, LangChain, LobeChat, NextChat, Cherry Studio, or 9Router.
 ## Key features
 
 - **OpenAI wire compatibility** — drop-in replacement for OpenAI SDKs and any client
-  that speaks `/v1/chat/completions`. Streaming SSE and buffered JSON.
+  that speaks `/v1/chat/completions` or `/v1/responses`. Streaming SSE and buffered
+  JSON, with `: ping` keepalives on idle streams.
+- **Multi-tenant mode** — `MUSE2API_ACCOUNT_STORE=sqlite` keeps accounts, hashed API
+  keys and usage counters in one `data/museai.db`, with per-key rate limiting
+  (`MUSE2API_RATE_LIMIT_RPM`) and `/admin/usage` aggregates.
 - **Driver abstraction** — routes never touch the browser. Three drivers ship today:
-  `mock` (offline echo, used by the test suite), `browser` (headless Chromium over
-  CDP), and `http` (direct protocol, scaffolded).
+  `mock` (offline echo, used by the test suite), `http` (muse.ai gateway protocol over
+  WebSocket + Noise XX — no Chromium, ~65 MB RSS), and `browser` (headless Chromium
+  over CDP, for media generation).
+- **Agent parity** — `tools` / `tool_choice` are rendered into the prompt and parsed
+  back out of the token stream into OpenAI `tool_calls`, and `/v1/responses` emits the
+  Responses API event stream (`response.output_text.delta`, `response.completed`).
 - **Account pool** — multiple muse.ai accounts with `affinity`, `lru`, or
   `round_robin` scheduling, per-account concurrency limits, cooldown on quota
   errors, and transparent failover (up to `MUSE2API_MAX_FAILOVER` retries).
@@ -69,9 +78,11 @@ OpenAI SDKs, LangChain, LobeChat, NextChat, Cherry Studio, or 9Router.
 | Language | Python 3.10+ |
 | HTTP framework | FastAPI + Uvicorn |
 | Schemas / settings | Pydantic 2 + pydantic-settings |
-| Browser automation | Headless Chromium via Chrome DevTools Protocol (`websockets`) |
+| Browser automation | Headless Chromium via Chrome DevTools Protocol (`websockets`, optional browser extra) |
+| Gateway transport | `noise` (Noise XX protocol) + `websockets` + hand-rolled protobuf codec |
+| Storage | JSON files by default; SQLite (`data/museai.db`) in multi-tenant mode |
 | Upstream HTTP | `httpx` |
-| Tests | `pytest` + `pytest-asyncio` (23 tests, ~1 s, 100% offline) |
+| Tests | `pytest` + `pytest-asyncio` (51 tests, ~2 s, 100% offline) |
 | Lint / format | `ruff` |
 | Packaging | Hatchling (`pip install -e .`) |
 | CI | GitHub Actions, Python 3.10 + 3.12 |
@@ -236,6 +247,18 @@ curl -X POST http://127.0.0.1:18610/admin/accounts \
 echoes `missing_cookies`; an empty list means the session cookie set is complete.
 Cookie values are always masked in responses (`e6f6...XP3g`).
 
+### Import with the CLI (any export format)
+
+```bash
+python scripts/import_cookies.py exported_cookies.json --label primary \
+  --url http://127.0.0.1:18610 --key "$MUSE2API_ADMIN_KEY"
+```
+
+The CLI accepts Cookie-Editor JSON, `cookies.txt`, or a raw `Cookie` header, warns
+about missing session cookies, and talks to the running instance. A Manifest V3
+extension in [`extension/`](extension/) does the same from the browser toolbar
+(load unpacked, paste the admin key, click *Send cookies*).
+
 ### Convert an export with the helper script
 
 `scripts/extract_cookies.py` accepts a Chrome DevTools / Cookie-Editor JSON array, a
@@ -347,7 +370,7 @@ curl -s -X POST http://127.0.0.1:20128/v1/chat/completions \
 | `POST` | `/v1/videos` | API key | Dispatch an async video task |
 | `GET` | `/v1/videos/{task_id}` | API key | Poll task status, progress, result |
 | `GET` | `/v1/media/{name}` | — | Serve generated media (unguessable name) |
-| `POST` | `/v1/responses` | API key | `501` — reserved for the Responses API |
+| `POST` | `/v1/responses` | API key | Responses API (buffered or SSE events) |
 | `GET` | `/admin/accounts` | Admin key | List accounts (cookies masked) |
 | `POST` | `/admin/accounts` | Admin key | Add an account |
 | `PATCH` | `/admin/accounts/{id}` | Admin key | Update label, enabled, cookies |
@@ -355,6 +378,10 @@ curl -s -X POST http://127.0.0.1:20128/v1/chat/completions \
 | `POST` | `/admin/accounts/{id}/reset` | Admin key | Clear cooldown/error state |
 | `POST` | `/admin/accounts/{id}/renew` | Admin key | Refresh cookies / wake the workspace |
 | `GET` | `/admin/status` | Admin key | Version, driver, capabilities, pool stats |
+| `POST` | `/admin/keys` | Admin key | Mint a database-backed API key (returned once) |
+| `GET` | `/admin/keys` | Admin key | List key hashes, labels, revocation state |
+| `DELETE` | `/admin/keys/{key_hash}` | Admin key | Revoke a key (enforced ≤30 s later) |
+| `GET` | `/admin/usage` | Admin key | Request/token aggregates per key and account (`?since=`) |
 | `GET` | `/admin/tasks` | Admin key | Recent tasks (`?limit=`) |
 | `POST` | `/admin/tasks/{id}/cancel` | Admin key | Cancel a background task |
 
@@ -370,7 +397,8 @@ Errors use the OpenAI shape:
 | 401 | `invalid_api_key` | Missing/wrong bearer token |
 | 404 | `not_found` | Unknown account, task, or media name |
 | 429 | `upstream_quota_exhausted` | Account out of quota; it enters cooldown |
-| 501 | `not_implemented` | Reserved endpoint |
+| 429 | `rate_limit_exceeded` | API key over `MUSE2API_RATE_LIMIT_RPM` |
+| 501 | `not_implemented` | Capability this driver does not implement |
 | 502 | `upstream_error` / `upstream_auth_failed` / `upstream_refused` | Upstream failure; auth failure marks the account invalid |
 | 503 | `no_account_available` | Pool empty, all accounts busy, or all invalid |
 | 504 | `upstream_timeout` | First token / chat / image / video timeout |
@@ -412,9 +440,19 @@ All variables use the `MUSE2API_` prefix and can be set in `.env` or the environ
 
 | Variable | Default | Description |
 |---|---|---|
-| `MUSE2API_DATA_DIR` | `data` | Accounts, tasks, media, browser profile |
+| `MUSE2API_DATA_DIR` | `data` | Accounts, tasks, media, browser profile, `museai.db` |
 | `MUSE2API_DRIVER` | `mock` | `mock` \| `browser` \| `http` |
 | `MUSE2API_SITE_URL` | `https://muse.ai` | Upstream base URL |
+| `MUSE2API_ACCOUNT_STORE` | `json` | `json` (files) or `sqlite` (accounts + keys + usage) |
+| `MUSE2API_RATE_LIMIT_RPM` | `0` | Requests per minute per API key; `0` disables |
+
+### HTTP driver (gateway protocol)
+
+| Variable | Default | Description |
+|---|---|---|
+| `MUSE2API_HTTP_TIMEOUT` | `60` | Bootstrap/WebSocket timeout in seconds |
+| `MUSE2API_HTTP_MAX_CONNECTIONS` | `8` | Bootstrap HTTP connection pool per request |
+| `MUSE2API_STREAM_PING_INTERVAL` | `15` | SSE `: ping` interval on idle streams; also the gateway read deadline |
 
 ### Browser driver
 
@@ -503,29 +541,42 @@ src/museai/
 ├── core/
 │   ├── models.py          # Model catalog + alias resolution
 │   ├── prompt.py          # Message flattening / follow-up detection
+│   ├── tools.py           # Tool schema rendering + fenced-block parser → tool_calls
+│   ├── cookies.py         # parse_any(): Cookie-Editor JSON, cookies.txt, raw header
 │   └── media.py           # Media storage + image reference loading
 ├── drivers/
 │   ├── base.py            # MuseDriver ABC and request/response types
 │   ├── registry.py        # Driver selection (lazy imports)
 │   ├── mock.py            # Offline driver for tests
 │   ├── browser/           # chromium.py, cdp.py, dom.py, driver.py
-│   └── http/              # direct-protocol driver (scaffold)
+│   └── http/              # gateway.py (Noise XX transport, protobuf frames) + driver.py
 └── upstream/
     └── muse.py            # Upstream constants, cookie validation, session renewal
+
+accounts/
+├── store.py              # JSON account store (default)
+├── sqlite_store.py       # accounts + hashed API keys + usage in data/museai.db
+├── pool.py               # scheduling, concurrency, cooldown
+└── keepalive.py          # periodic session renewal
 ```
 
 ### Request lifecycle
 
-1. FastAPI validates the body (`api/schemas.py`) and the bearer token (`api/deps.py`).
+1. FastAPI validates the body (`api/schemas.py`) and the bearer token (`api/deps.py`,
+   which also enforces the per-key rate limit and the DB key store when enabled).
 2. The route resolves the model (`core/models.py`) and flattens messages
    (`core/prompt.py`).
 3. `services/gateway.py` leases an account from the pool — or, for account-less
    drivers such as `mock`, uses an anonymous lease.
-4. The driver performs the upstream call. `BrowserDriver` reuses one tab per account
-   and opens a fresh thread when the conversation changes.
+4. The driver performs the upstream call. `BrowserDriver` reuses one tab per account;
+   `HttpDriver` bootstraps gateway credentials, dials `wss://hatch.metaaivm.com/v1/noise`,
+   completes a Noise XX handshake and speaks protobuf RPC frames (see
+   [docs/protocol.md](docs/protocol.md)).
 5. Deltas flow back as SSE; on a retryable error before any text is emitted the
    gateway fails over to another account.
-6. `Lease.fail()`/`release()` update account health and persist `data/accounts.json`.
+6. `Lease.fail()`/`release()` update account health and persist accounts (JSON file or
+   `museai.db`, depending on `MUSE2API_ACCOUNT_STORE`). Usage rows are written by the
+   chat and responses routes when usage tracking is enabled.
 
 ### Driver contract
 
@@ -705,13 +756,21 @@ full path of `chrome.exe`.
 
 Not implemented today, tracked in [TODO.md](TODO.md):
 
-- `/v1/responses` and `/v1/images/edits` return `501`.
-- Tool/function calling, `temperature`, `top_p`, and `max_tokens` are accepted but
-  ignored (the upstream web client exposes no such controls).
-- The `http` driver is a scaffold; `browser` is the working path.
+- `/v1/images/edits` returns `501`.
+- The `http` driver covers chat, tools and `/v1/responses`, but **not** image or video
+  generation: those need the upstream media RPCs and the `delta.presentation` download
+  path mapped (see [docs/protocol.md](docs/protocol.md) §5). Use `driver=browser` for
+  media.
+- Tool calling is emulated through the prompt: the schema is rendered, the reply is
+  parsed for a fenced `tool` block. The muse.ai agent also ignores that block for some
+  prompts (it answers directly instead), so a coding agent may see plain text rather
+  than `tool_calls`. The upstream `delta.tool_start` / `delta.tool_done` events are not
+  yet mapped.
+- `temperature`, `top_p`, and `max_tokens` are accepted but ignored (the upstream web
+  client exposes no sampling controls).
 - Quota lookup, media cleanup, and a web admin UI are not built.
-- No built-in rate limiting beyond per-account concurrency: put it behind a proxy if
-  you expose it to more than yourself.
+- Revoking a database-backed API key takes effect within 30 seconds (positive-result
+  cache in `api/deps.py`).
 
 ## Contributing
 

@@ -18,9 +18,10 @@ router = APIRouter(tags=["images"], dependencies=[Depends(require_api_key)])
 def _image_item(r: MediaResult, fmt: str, svc: Services, base: str) -> dict:
     item: dict = {"revised_prompt": r.revised_prompt}
     if fmt == "b64_json":
-        item["b64_json"] = base64.b64encode(r.data).decode()
+        payload = r.path.read_bytes() if r.path else r.data
+        item["b64_json"] = base64.b64encode(payload).decode()
     else:
-        name = svc.media.save(r.data, r.mime, prefix="img")
+        name = svc.media.adopt(r.path) if r.path else svc.media.save(r.data, r.mime, prefix="img")
         item["url"] = f"{base}/v1/media/{name}"
     return item
 

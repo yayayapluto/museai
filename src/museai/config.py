@@ -61,12 +61,25 @@ class Settings(BaseSettings):
     image_timeout: float = 240.0
     video_timeout: float = 600.0
 
+    # http driver
+    http_timeout: float = 60.0
+    http_max_connections: int = 8
+
+    # streaming: SSE comment keepalive interval (0 disables)
+    stream_ping_interval: float = 15.0
+
     # --- account pool ---
     pool_strategy: PoolStrategyName = "affinity"
     pool_acquire_timeout: float = 60.0
     account_max_concurrency: int = 1
     account_cooldown: float = 120.0
     max_failover: int = 2
+
+    # --- multi-tenant storage ---
+    account_store: Literal["json", "sqlite"] = "json"
+    """``sqlite`` keeps accounts, API keys and usage in one ``data/museai.db``."""
+    rate_limit_rpm: int = 0
+    """Requests per minute per API key; 0 disables the limiter."""
 
     # --- keepalive (session renewal) ---
     keepalive_enabled: bool = False
@@ -83,6 +96,10 @@ class Settings(BaseSettings):
     @property
     def tasks_file(self) -> Path:
         return self.data_dir / "tasks.json"
+
+    @property
+    def db_file(self) -> Path:
+        return self.data_dir / "museai.db"
 
     @property
     def key_file(self) -> Path:

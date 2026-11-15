@@ -12,6 +12,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from ..accounts.model import Account
@@ -67,12 +68,14 @@ class VideoRequest:
 
 @dataclass
 class MediaResult:
-    data: bytes
-    mime: str
-    kind: Literal["image", "video"]
+    data: bytes = b""
+    mime: str = "application/octet-stream"
+    kind: Literal["image", "video"] = "image"
     width: int | None = None
     height: int | None = None
     revised_prompt: str | None = None
+    path: Path | None = None
+    """Set when the driver already wrote the payload to disk; ``data`` is then empty."""
 
 
 @dataclass

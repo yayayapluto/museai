@@ -123,3 +123,37 @@ When modifying the codebase, preserve these verified fixes:
 2. **Dual-Domain Cookie Scope**: Always register cookies for both `domain: ".muse.ai"` and `domain: "muse.ai"`.
 3. **Multi-Language DOM Readiness**: Upstream renders in user locales (English, Indonesian, Chinese, etc.). Readiness selectors in `dom.py` rely on input presence and hydration state, avoiding locale-specific string matching.
 4. **Clean Concurrency Model**: Headless Chromium runs 1 persistent process with isolated `BrowserContext` per account to prevent session bleeding.
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in the fork's GitHub Issues (`yayayapluto/museai`), driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles use their default label strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+---
+
+## Fork additions (yayayapluto/museai)
+
+This fork adds a **Chromium-free transport** and multi-tenant plumbing. Keep these
+constraints when changing the codebase:
+
+- `src/museai/drivers/http/gateway.py` implements the muse.ai gateway protocol
+  (WebSocket + Noise XX + protobuf frames). Every fact in `docs/protocol.md` was
+  verified live; do not "fix" the wire format without re-running
+  `scripts/probe_gateway.py`.
+- Never refactor the upstream browser driver (`drivers/browser/*`), `drivers/base.py`
+  or `core/prompt.py` as part of http-driver work — the fork stays additive.
+- Fixtures in `tests/fixtures/` are captured from the live gateway; regenerate them
+  with the probe, never hand-write them.
+- Multi-tenant mode (`MUSE2API_ACCOUNT_STORE=sqlite`) stores hashed API keys only —
+  plaintext keys are returned once by `POST /admin/keys`.

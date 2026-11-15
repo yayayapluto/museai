@@ -32,6 +32,20 @@ class ChatCompletionRequest(_Lenient):
     tool_choice: Any = None
 
 
+class KeyCreate(BaseModel):
+    label: str = ""
+
+
+class ResponseCreateRequest(_Lenient):
+    model: str | None = None
+    input: str | list[dict[str, Any]]
+    instructions: str | None = None
+    stream: bool = False
+    user: str | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any = None
+
+
 class ImageGenerationRequest(_Lenient):
     prompt: str = Field(min_length=1)
     model: str | None = None
@@ -53,7 +67,9 @@ class VideoCreateRequest(_Lenient):
 
 class AccountCreate(BaseModel):
     label: str = ""
-    cookies: dict[str, str]
+    cookies_raw: str | None = None
+    """Any browser export: Cookie-Editor JSON, cookies.txt or a raw Cookie header."""
+    cookies: dict[str, str] = Field(default_factory=dict)
     cookie_expires: dict[str, int] = Field(default_factory=dict)
     enabled: bool = True
 
@@ -61,5 +77,6 @@ class AccountCreate(BaseModel):
 class AccountUpdate(BaseModel):
     label: str | None = None
     enabled: bool | None = None
+    cookies_raw: str | None = None
     cookies: dict[str, str] | None = None
     cookie_expires: dict[str, int] | None = None

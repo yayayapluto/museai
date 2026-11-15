@@ -53,3 +53,6 @@ htmlcov/
 .vscode/
 *.swp
 *.swo
+
+# Probe dumps (contain real transcripts)
+docs/protocol-frames.jsonl

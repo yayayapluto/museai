@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "museai cookie import",
+  "version": "1.0.0",
+  "description": "Send your muse.ai session cookies to a local museai instance.",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": ["https://muse.ai/*", "http://127.0.0.1/*", "http://localhost/*"],
+  "action": {
+    "default_title": "Import muse.ai cookies",
+    "default_popup": "popup.html"
+  }
+}

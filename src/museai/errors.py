@@ -47,6 +47,14 @@ class FeatureNotImplemented(Muse2APIError):
     code = "not_implemented"
 
 
+class ConfigError(Muse2APIError):
+    """The selected driver cannot start with the installed dependencies."""
+
+    status_code = 500
+    error_type = "server_error"
+    code = "invalid_config"
+
+
 # --- capacity ---
 class NoAccountAvailable(Muse2APIError):
     status_code = 503

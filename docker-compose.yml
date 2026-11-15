@@ -10,4 +10,20 @@ services:
       - "127.0.0.1:18610:18610"
     volumes:
       - ./data:/app/data
-    shm_size: "1gb"
+
+  # Fallback when MUSE2API_DRIVER=browser is required. Uncomment, then set
+  # MUSE2API_DRIVER=browser in .env. The default image above has no Chromium.
+  # browser:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.browser
+  #   image: museai:browser
+  #   restart: unless-stopped
+  #   env_file:
+  #     - path: .env
+  #       required: false
+  #   ports:
+  #     - "127.0.0.1:18611:18610"
+  #   volumes:
+  #     - ./data:/app/data
+  #   shm_size: "1gb"

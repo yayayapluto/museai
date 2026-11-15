@@ -167,7 +167,7 @@ MUSE2API_CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe   #
 ### 5. Run
 
 ```bash
-muse2ai start
+muse2api start
 ```
 
 That is the recommended entry point: it starts the server and keeps a live Rich
@@ -175,7 +175,7 @@ dashboard on screen — URL, version and driver, uptime, masked keys, data dir, 
 pool stats, the endpoint map, and the last log lines.
 
 ```text
-╭───────────────────────── muse2ai ─────────────────────────╮
+╭───────────────────────── muse2api ─────────────────────────╮
 │ URL        http://127.0.0.1:18610                         │
 │ Version    0.1.0 (driver=http)                            │
 │ Uptime     00:01:07                                       │

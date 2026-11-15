@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     image_timeout: float = 240.0
     video_timeout: float = 600.0
 
+    # http driver
+    http_timeout: float = 60.0
+    http_max_connections: int = 8
+
+    # streaming: SSE comment keepalive interval (0 disables)
+    stream_ping_interval: float = 15.0
+
     # --- account pool ---
     pool_strategy: PoolStrategyName = "affinity"
     pool_acquire_timeout: float = 60.0

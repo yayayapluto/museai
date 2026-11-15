@@ -40,7 +40,11 @@ async def create_video(body: VideoCreateRequest, request: Request,
                            duration=body.duration or body.seconds, first_frame=first_frame,
                            timeout=svc.settings.video_timeout, on_progress=progress)
         result = await svc.gateway.generate_video(req)
-        name = svc.media.save(result.data, result.mime, prefix="vid")
+        name = (
+            svc.media.adopt(result.path, prefix="vid")
+            if result.path
+            else svc.media.save(result.data, result.mime, prefix="vid")
+        )
         return {"url": f"{base}/v1/media/{name}", "mime": result.mime,
                 "width": result.width, "height": result.height}
 

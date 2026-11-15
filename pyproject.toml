@@ -12,18 +12,21 @@ requires-python = ">=3.10"
 authors = [{ name = "d4ncboz" }]
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
+    "uvicorn>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "httpx[socks]>=0.27",
-    "websockets>=13.0",
 ]
 
 [project.optional-dependencies]
+# Only the Chromium driver (drivers/browser) needs websockets.
+browser = ["websockets>=13.0"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.7",
+    "websockets>=13.0",
+    "noiseprotocol>=0.3",
 ]
 
 [project.scripts]

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+import os
 import re
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
@@ -29,10 +31,33 @@ class MediaStore:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def save(self, data: bytes, mime: str, prefix: str = "m") -> str:
+    def _name(self, mime: str, prefix: str) -> str:
         ext = _EXT_BY_MIME.get(mime.split(";")[0].strip().lower(), ".bin")
-        name = f"{prefix}_{uuid.uuid4().hex[:16]}{ext}"
+        return f"{prefix}_{uuid.uuid4().hex[:16]}{ext}"
+
+    def save(self, data: bytes, mime: str, prefix: str = "m") -> str:
+        name = self._name(mime, prefix)
         (self.root / name).write_bytes(data)
+        return name
+
+    async def save_stream(self, chunks: AsyncIterator[bytes], mime: str, prefix: str = "m") -> str:
+        """Write an async body to disk chunk by chunk so large media never sits in RAM."""
+        name = self._name(mime, prefix)
+        part = self.root / f".part-{uuid.uuid4().hex}"
+        try:
+            with part.open("wb") as fh:
+                async for chunk in chunks:
+                    fh.write(chunk)
+            os.replace(part, self.root / name)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
+        return name
+
+    def adopt(self, path: Path, prefix: str = "img") -> str:
+        """Move a finished file written elsewhere into the store."""
+        name = self._name(self.mime_of(path.name), prefix)
+        os.replace(path, self.root / name)
         return name
 
     def path_of(self, name: str) -> Path:

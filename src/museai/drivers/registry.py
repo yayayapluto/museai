@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..config import Settings
+from ..errors import ConfigError
 from .base import MuseDriver
 
 
@@ -12,7 +13,12 @@ def create_driver(settings: Settings) -> MuseDriver:
 
         return MockDriver()
     if settings.driver == "browser":
-        from .browser.driver import BrowserDriver
+        try:
+            from .browser.driver import BrowserDriver
+        except ImportError as exc:  # websockets lives in the optional [browser] extra
+            raise ConfigError(
+                "browser driver requires extra dependencies: pip install 'museai[browser]'"
+            ) from exc
 
         return BrowserDriver(settings)
     if settings.driver == "http":

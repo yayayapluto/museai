@@ -14,18 +14,20 @@
 
 ---
 
-`museai` exposes a personal muse.ai workspace — which is browser-only — as a
-standard OpenAI API (`/v1/chat/completions`, `/v1/images/generations`, `/v1/videos`,
-`/v1/models`). It drives a headless Chromium logged in with your muse.ai session
-cookies and streams the assistant output back to any OpenAI-compatible client:
-OpenAI SDKs, LangChain, LobeChat, NextChat, Cherry Studio, or 9Router.
+`museai` exposes a personal muse.ai workspace — which is browser-only — as a standard
+OpenAI API (`/v1/chat/completions`, `/v1/responses`, `/v1/images/generations`,
+`/v1/videos`, `/v1/models`). The default `http` driver speaks the muse.ai gateway
+protocol directly (WebSocket + Noise XX), so chat needs **no Chromium**; the optional
+`browser` driver adds image and video generation. Point any OpenAI-compatible client at
+it: OpenAI SDKs, LangChain, LobeChat, NextChat, Cherry Studio, or 9Router.
 
 ## Table of contents
 
+- [Install](#install)
+- [What you need](#what-you-need)
 - [Key features](#key-features)
 - [Tech stack](#tech-stack)
-- [Prerequisites](#prerequisites)
-- [Getting started](#getting-started)
+- [Onboarding walkthrough](ONBOARDING.md)
 - [Account setup](#account-setup)
 - [Usage](#usage)
 - [Endpoints](#endpoints)
@@ -87,98 +89,91 @@ OpenAI SDKs, LangChain, LobeChat, NextChat, Cherry Studio, or 9Router.
 | Packaging | Hatchling (`pip install -e .`) |
 | CI | GitHub Actions, Python 3.10 + 3.12 |
 
-## Prerequisites
+## Install
 
-- **Python 3.10 or newer** (`python --version`).
-- **Google Chrome or Chromium.** The browser driver launches its own instance with
-  `--remote-debugging-port`; you do not need to start it yourself.
-  - Auto-detection covers Linux (`chromium`, `chromium-browser`, `google-chrome`,
-    `/usr/bin/chromium`, `/snap/bin/chromium`) and macOS
-    (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`).
-  - **Windows and any custom install: set `MUSE2API_CHROMIUM_PATH` explicitly**, e.g.
-    ```ini
-    MUSE2API_CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
-    ```
-- **An active muse.ai account** with access to the personal agent, and the ability to
-  read its cookies from a browser you are logged into.
-- *(Optional)* [9Router](https://github.com/9router/9router) if you want the multi-model
-  gateway integration.
-
-## Getting started
-
-### 1. Clone
+Two commands, then a wizard. No hand-written `.env`, no manual JSON.
 
 ```bash
-git clone https://github.com/d4ncboz/museai.git
+pipx install "museai[http] @ git+https://github.com/yayayapluto/museai.git"
+```
+
+```bash
+muse2api setup      # imports your muse.ai cookies and verifies them live
+muse2api start      # dashboard on http://127.0.0.1:18610
+```
+
+Windows without `pipx` yet:
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath        # open a NEW terminal afterwards
+py -m pipx install "museai[http] @ git+https://github.com/yayayapluto/museai.git"
+```
+
+Working on the code instead (editable, gets `[dev]` too):
+
+```bash
+git clone https://github.com/yayayapluto/museai.git
 cd museai
-```
-
-### 2. Create a virtual environment
-
-```bash
 python -m venv .venv
-
-# macOS / Linux
-source .venv/bin/activate
-
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-
-# Windows (cmd)
-.venv\Scripts\activate.bat
-```
-
-With [uv](https://docs.astral.sh/uv/) instead:
-
-```bash
-uv venv .venv
-uv pip install -e ".[http,dev]" --python .venv/Scripts/python.exe   # Windows
-uv pip install -e ".[http,dev]" --python .venv/bin/python           # macOS / Linux
-```
-
-### 3. Install the package
-
-```bash
+# Windows: .venv\Scripts\Activate.ps1    macOS/Linux: source .venv/bin/activate
 pip install -e ".[http,dev]"
+muse2api setup
 ```
 
-This installs the `museai` console script and the runtime dependencies
-(FastAPI, Uvicorn, Pydantic, httpx, websockets) plus dev extras (pytest, ruff).
+`muse2api setup` writes `.env` with `MUSE2API_DRIVER=http`, accepts the cookie export as
+pasted JSON / `cookies.txt` / a `Cookie:` header (`--cookies FILE` and `--clipboard`
+exist for scripts), verifies the session against muse.ai **before** saving it, and prints
+ready-to-paste client settings.
 
-### 4. Configure
+Stuck on anything? `muse2api doctor` lists every check with the fix, and
+[`ONBOARDING.md`](ONBOARDING.md) is the 5-minute walkthrough with a troubleshooting table.
+
+| Client field | Value |
+|---|---|
+| Base URL | `http://127.0.0.1:18610/v1` |
+| API key | printed by `muse2api setup`; also stored in `data/api_key` |
+| Model | `muse-chat` (aliases: `gpt-4o`, `gpt-4o-mini`, `gpt-5`, `claude-3-5-sonnet`) |
 
 ```bash
-cp .env.example .env
+curl http://127.0.0.1:18610/v1/chat/completions \
+  -H "Authorization: Bearer <API_KEY>" -H "Content-Type: application/json" \
+  -d '{"model":"muse-chat","messages":[{"role":"user","content":"say pong"}]}'
 ```
 
-`.env.example` ships with `MUSE2API_DRIVER=mock`: the service starts and answers
-without a browser or an account. **All settings use the `MUSE2API_` prefix** — values
-named `MUSEAI_*` are ignored.
+### What you need
 
-Minimum edits worth making before first run:
+- **Python 3.10+**. Nothing else for the default `http` driver — no Chromium, no
+  browser profile, ~65 MB RSS.
+- **An active muse.ai account.** Cookies come from the bundled extension
+  (`chrome://extensions` → Developer mode → Load unpacked → `extension/`), or from any
+  cookie exporter.
+- **Chromium only if you want image or video generation** (`--driver browser`). Set
+  `MUSE2API_CHROMIUM_PATH` on Windows; auto-detection covers the usual Linux and macOS
+  locations.
+- *(Optional)* [9Router](https://github.com/9router/9router) for the multi-model gateway.
 
-```ini
-MUSE2API_DRIVER=http
-MUSE2API_API_KEY=sk-museai-local-key
-MUSE2API_ADMIN_KEY=sk-museai-admin-key
+### Commands
+
+| Command | What it does |
+|---|---|
+| `muse2api setup` | writes `.env`, imports + verifies cookies, prints client snippets |
+| `muse2api doctor` | checks driver, extras, data dir, accounts, cookie expiry, port; `--live` also runs the upstream handshake |
+| `muse2api start` | server + live Rich dashboard (`--no-ui` for containers) |
+| `muse2api start --driver browser` | Chromium mode, the only mode with image/video |
+| `python -m museai` | server without the CLI wrapper |
+
+`muse2api start` prints the configuration it actually resolved, which settles the usual
+"why is it still using Chromium" question:
+
+```text
+config: driver=http data_dir=data cwd=E:\muse2api
 ```
 
-`http` is the fork driver: no Chromium, one Noise/WebSocket channel per request, ~5-15 s
-per answer. Switch to `browser` only when you need image or video generation; that mode
-also wants `MUSE2API_CHROMIUM_PATH`.
+A variable exported in your shell wins over `.env`. Check `echo $env:MUSE2API_DRIVER`
+(PowerShell) or `printenv MUSE2API_DRIVER` before editing the file.
 
-A variable already exported in the shell beats `.env`. If the dashboard shows the wrong
-driver, check `echo $env:MUSE2API_DRIVER` (PowerShell) before editing the file.
-
-### 5. Run
-
-```bash
-muse2api start
-```
-
-That is the recommended entry point: it starts the server and keeps a live Rich
-dashboard on screen — URL, version and driver, uptime, masked keys, data dir, account
-pool stats, the endpoint map, and the last log lines.
+Dashboard, on a healthy instance:
 
 ```text
 ╭───────────────────────── muse2api ─────────────────────────╮
@@ -192,47 +187,17 @@ pool stats, the endpoint map, and the last log lines.
 ╰──────────────────────── Ctrl+C to stop ───────────────────╯
 ```
 
-Flags: `--host`, `--port`, `--driver {mock,browser,http}`, `--show-keys`, `--no-ui`
-(plain logs, for containers). Without the dashboard:
-
-```bash
-python -m museai          # same server, plain output
-```
-
-Expected output:
-
-```text
-museai listening on http://127.0.0.1:18610  (driver=browser)
-INFO     museai.accounts.pool: loaded 0 account(s)
-INFO     museai.drivers.browser.chromium: launching Chromium: ...
-INFO     museai.drivers.browser.driver: browser driver ready
-INFO     museai: museai 0.1.0 ready (driver=browser)
-```
-
-The equivalent console script is `museai`, installed by `pip install -e .`.
-
-### 6. Verify
-
-```bash
-curl http://127.0.0.1:18610/healthz
-# {"ok":true,"version":"0.1.0"}
-
-curl http://127.0.0.1:18610/readyz
-# {"ready":false,"driver":{"driver":"browser","ok":true,"tabs":0},
-#  "accounts":{"total":0,"available":0,"invalid":0,"inflight":0}}
-
-curl -H "Authorization: Bearer sk-museai-local-key" http://127.0.0.1:18610/v1/models
-```
-
-`ready` is `false` until at least one account is available (a driver that does not
-require accounts, such as `mock`, is ready immediately). Auth, models and error
-plumbing can be exercised in `mock` mode before you paste any real cookie.
+Health checks: `/healthz` → `{"ok":true,"version":"0.1.0"}`; `/readyz` reports
+`ready:false` until an account is available.
 
 ## Account setup
 
-`muse.ai` authenticates with browser cookies. Export them from a browser session
-already logged in to `https://muse.ai` (DevTools → `Application` → `Cookies` →
-`https://muse.ai`, or a cookie-exporter extension → JSON export).
+`muse2api setup` covers the normal path. This section is the reference for what it does
+and for the manual/advanced cases (multiple accounts, SQLite store).
+
+`muse.ai` authenticates with browser cookies. Export them from a browser session already
+logged in to `https://muse.ai` — the bundled extension (Copy cookies), DevTools →
+`Application` → `Cookies` → `https://muse.ai`, or any exporter → JSON.
 
 | Cookie | Required | Purpose |
 |---|---|---|
@@ -664,20 +629,21 @@ upstream work in the driver layer.
 ```bash
 docker build -t museai .
 docker run --rm -p 127.0.0.1:18610:18610 \
-  -e MUSE2API_DRIVER=browser \
+  -e MUSE2API_DRIVER=http \
   -e MUSE2API_API_KEY=sk-museai-local-key \
   -e MUSE2API_ADMIN_KEY=sk-museai-admin-key \
   -v "$PWD/data:/app/data" \
   museai
 ```
 
-The image installs Chromium, runs as an unprivileged `muse` user, and stores state in
-`/app/data`.
+`Dockerfile` is the Chromium-free image (default driver `http`). For image/video
+generation build `Dockerfile.browser` instead. Both run as an unprivileged `muse` user
+and store state in `/app/data`.
 
 ### Docker Compose
 
 ```bash
-cp .env.example .env   # edit keys, set MUSE2API_DRIVER=browser
+cp .env.example .env   # then run `muse2api setup` for cookies
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -690,8 +656,8 @@ and delete accounts.
 
 ```bash
 git pull
-pip install -e .
-MUSE2API_DRIVER=browser python -m museai
+pip install -e ".[http]"
+muse2api doctor && muse2api start
 ```
 
 The service holds no database; state is `data/accounts.json`, `data/tasks.json` and

@@ -24,7 +24,7 @@ from typing import Any
 
 import uvicorn
 
-from . import __version__
+from . import __version__, onboarding
 from .app import create_app
 from .config import Settings, get_settings
 from .log import setup_logging
@@ -76,6 +76,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     start.add_argument("--no-ui", action="store_true", help="plain uvicorn logs, no dashboard")
     start.add_argument("--show-keys", action="store_true", help="print API keys in the dashboard")
+
+    setup = sub.add_parser("setup", help="first run: write .env, import cookies, print snippets")
+    setup.add_argument("--driver", default=None, choices=["mock", "browser", "http"])
+    setup.add_argument("--cookies", default=None, metavar="FILE", help="cookie export file")
+    setup.add_argument(
+        "--clipboard", action="store_true", help="read the cookie export from the clipboard"
+    )
+    setup.add_argument("--label", default="", help="account label (default: primary)")
+    setup.add_argument("--no-verify", action="store_true", help="skip the live handshake check")
+    setup.add_argument(
+        "--force", action="store_true", help="import even when mandatory cookies are missing"
+    )
+
+    doctor = sub.add_parser("doctor", help="explain why requests would fail")
+    doctor.add_argument("--port", type=int, default=None, help="port to check (default from settings)")
+    doctor.add_argument(
+        "--live", action="store_true", help="also run the upstream handshake for each account"
+    )
     return ap
 
 
@@ -283,12 +301,150 @@ async def serve(settings: Settings, *, show_ui: bool, show_keys: bool) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    if args.command != "start":  # pragma: no cover - argparse enforces the subcommand
-        return 2
-    settings = apply_overrides(get_settings(), args)
-    setup_logging(settings.log_level)
+def _console() -> Any:
+    from rich.console import Console
+
+    return Console()
+
+
+def _rule(console: Any, title: str) -> None:
+    from rich.rule import Rule
+
+    console.print(Rule(title, style="cyan"))
+
+
+def _read_cookie_input(args: argparse.Namespace, console: Any) -> str:
+    """Cookie export from ``--cookies``, ``--clipboard`` or an interactive paste."""
+    if args.cookies:
+        from pathlib import Path
+
+        return Path(args.cookies).read_text(encoding="utf-8")
+    if args.clipboard:
+        text = onboarding.read_clipboard()
+        if not text.strip():
+            console.print("[yellow]clipboard is empty or unreadable[/yellow]")
+        return text
+    if not sys.stdin.isatty():
+        return ""
+    console.print(
+        "[bold]Get your cookies[/bold] — in Chrome: the muse2api extension popup → "
+        "[bold]Copy cookies[/bold].\n"
+        "Then paste the JSON here (a file path also works). Empty line = skip."
+    )
+    try:
+        raw = input("cookies> ").strip()
+    except EOFError:
+        return ""
+    from pathlib import Path
+
+    if raw and not raw.startswith(("[", "{", "#")) and Path(raw).is_file():
+        return Path(raw).read_text(encoding="utf-8")
+    return raw
+
+
+async def run_setup(settings: Settings, args: argparse.Namespace) -> int:
+    console = _console()
+    driver = args.driver or ("http" if settings.driver == "mock" else settings.driver)
+    settings.driver = driver
+    accounts = await onboarding.load_accounts(settings)
+
+    _rule(console, "muse2api setup")
+    action = onboarding.write_env_driver(driver)
+    console.print(f".env  {'created' if action == 'created' else action}: driver={driver}")
+    conflict = onboarding.driver_conflict(driver)
+    if conflict:
+        console.print(f"[yellow]note[/yellow] {conflict}")
+
+    text = _read_cookie_input(args, console)
+    imported = False
+    if text.strip():
+        try:
+            export = onboarding.parse_export(text)
+        except onboarding.CookieParseError as exc:
+            console.print(f"[bold red]cannot read that export:[/bold red] {exc}")
+            return 1
+        if export.missing and not args.force:
+            console.print(
+                f"[bold red]missing required cookies:[/bold red] {', '.join(export.missing)}\n"
+                "Log in to muse.ai, copy again, or pass --force to import anyway."
+            )
+            return 1
+        if not args.no_verify and not export.missing:
+            console.print("checking cookies against muse.ai…")
+            ok, detail = await onboarding.verify_cookies(settings, export.cookies)
+            if not ok:
+                console.print(f"[bold red]cookies rejected:[/bold red] {detail}")
+                return 1
+            console.print(f"[green]gateway accepted the session[/green] ({detail})")
+        account = await onboarding.async_save_account(
+            settings, export.cookies, export.expires, args.label
+        )
+        console.print(f"account saved: {account.id} · {len(export.cookies)} cookies")
+        imported = True
+    elif accounts:
+        console.print(f"keeping {len(accounts)} existing account(s)")
+    else:
+        console.print("[yellow]no cookies imported yet[/yellow] — run setup again when you have them")
+
+    api_key = settings.resolve_api_key()
+    for line in onboarding.client_snippets(settings, api_key):
+        console.print(line, markup=False)
+    console.print("")
+    console.print(f"next: [bold]muse2api start[/bold]   ({onboarding.summary_line(settings, accounts)})")
+    if not imported and not accounts:
+        return 1
+    return 0
+
+
+async def run_doctor(settings: Settings, args: argparse.Namespace) -> int:
+    from rich.table import Table
+
+    console = _console()
+    if args.port:
+        settings.port = args.port
+    accounts = await onboarding.load_accounts(settings)
+    checks = onboarding.doctor_checks(settings, accounts)
+    free = port_available(settings.host, settings.port)
+    checks.append(
+        onboarding.Check(
+            "port",
+            free,
+            f"{settings.host}:{settings.port} free" if free else f"{settings.host}:{settings.port} busy",
+            "" if free else "stop the other instance or use `muse2api start --port 18611`",
+        )
+    )
+    if args.live:
+        for account in accounts:
+            ok, detail = await onboarding.verify_cookies(settings, account.cookies)
+            checks.append(
+                onboarding.Check(
+                    f"live {account.id}",
+                    ok,
+                    detail,
+                    "" if ok else "cookies expired or the account is logged out",
+                )
+            )
+
+    table = Table(title="muse2api doctor", border_style="cyan", show_lines=False)
+    table.add_column("check", style="bold cyan", no_wrap=True)
+    table.add_column("state", no_wrap=True)
+    table.add_column("detail", overflow="fold")
+    table.add_column("fix", style="dim", overflow="fold")
+    for check in checks:
+        state = "[green]ok[/green]" if check.ok else "[bold red]fix[/bold red]"
+        table.add_row(check.name, state, check.detail, check.fix if not check.ok else "")
+    console.print(table)
+
+    failing = [c for c in checks if not c.ok]
+    if failing:
+        console.print(f"{len(failing)} problem(s) — fixes above, then run `muse2api doctor` again")
+        return 1
+    console.print("everything checks out — `muse2api start` is ready")
+    return 0
+
+
+def run_start(settings: Settings, args: argparse.Namespace) -> int:
+    settings = apply_overrides(settings, args)
     log.info(
         "config: driver=%s data_dir=%s cwd=%s", settings.driver, settings.data_dir, os.getcwd()
     )
@@ -300,6 +456,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    if settings.driver != "mock" and not asyncio.run(onboarding.load_accounts(settings)):
+        print(
+            "no muse.ai account yet — run `muse2api setup` to import cookies. "
+            "Requests will answer 503 until then.",
+            file=sys.stderr,
+        )
     try:
         return asyncio.run(serve(settings, show_ui=not args.no_ui, show_keys=args.show_keys))
     except KeyboardInterrupt:
@@ -312,6 +474,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         if code:
             print(f"server failed to start (uvicorn exit {code}); see the log above", file=sys.stderr)
         return int(code)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    settings = get_settings()
+    setup_logging(settings.log_level)
+    if args.command == "setup":
+        return asyncio.run(run_setup(settings, args))
+    if args.command == "doctor":
+        return asyncio.run(run_doctor(settings, args))
+    return run_start(settings, args)
 
 
 if __name__ == "__main__":  # pragma: no cover

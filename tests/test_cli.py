@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import logging
 import socket
+import sys
 
 from museai.cli import (
     DashboardState,
@@ -15,6 +18,8 @@ from museai.cli import (
     info_lines,
     masked,
     port_available,
+    run_doctor,
+    run_setup,
 )
 
 
@@ -93,3 +98,56 @@ def test_startup_failure_is_none_while_running():
         return asyncio.get_running_loop().create_future()
 
     assert _startup_failure(asyncio.run(make())) is None
+
+
+def test_parser_exposes_setup_and_doctor():
+    parser = build_parser()
+    assert parser.parse_args(["setup"]).command == "setup"
+    assert parser.parse_args(["doctor", "--live"]).live is True
+    assert parser.parse_args(["start", "--no-ui"]).command == "start"
+
+
+def test_setup_without_cookies_writes_env_and_points_at_cookies(settings, monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))  # not a tty -> skip the prompt
+    code = asyncio.run(run_setup(settings, build_parser().parse_args(["setup"])))
+    assert code == 1
+    assert (tmp_path / ".env").read_text(encoding="utf-8").count("MUSE2API_DRIVER=http") == 1
+    assert "no cookies imported yet" in capsys.readouterr().out
+
+
+def test_setup_imports_a_pasted_export(settings, monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    export = tmp_path / "cookies.json"
+    export.write_text(
+        json.dumps(
+            [
+                {"name": "hatch_sess", "value": "s"},
+                {"name": "hatch_gw", "value": "g"},
+                {"name": "hatch_native_auth_device", "value": "d"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = build_parser().parse_args(["setup", "--cookies", str(export), "--no-verify"])
+    assert asyncio.run(run_setup(settings, args)) == 0
+    out = capsys.readouterr().out
+    assert "account saved" in out
+    assert "http://127.0.0.1:18610/v1" in out
+
+
+def test_setup_refuses_an_incomplete_export(settings, monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    export = tmp_path / "cookies.json"
+    export.write_text('{"hatch_sess": "only"}', encoding="utf-8")
+    args = build_parser().parse_args(["setup", "--cookies", str(export), "--no-verify"])
+    assert asyncio.run(run_setup(settings, args)) == 1
+    assert "missing required cookies" in capsys.readouterr().out
+
+
+def test_doctor_fails_until_an_account_exists(settings, monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    code = asyncio.run(run_doctor(settings, build_parser().parse_args(["doctor"])))
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "accounts" in out and "muse2api setup" in out

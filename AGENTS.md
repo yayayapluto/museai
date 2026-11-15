@@ -123,3 +123,19 @@ When modifying the codebase, preserve these verified fixes:
 2. **Dual-Domain Cookie Scope**: Always register cookies for both `domain: ".muse.ai"` and `domain: "muse.ai"`.
 3. **Multi-Language DOM Readiness**: Upstream renders in user locales (English, Indonesian, Chinese, etc.). Readiness selectors in `dom.py` rely on input presence and hydration state, avoiding locale-specific string matching.
 4. **Clean Concurrency Model**: Headless Chromium runs 1 persistent process with isolated `BrowserContext` per account to prevent session bleeding.
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in the fork's GitHub Issues (`yayayapluto/museai`), driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles use their default label strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

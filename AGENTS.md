@@ -139,3 +139,21 @@ The five canonical roles use their default label strings (`needs-triage`, `needs
 ### Domain docs
 
 Single-context layout: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+---
+
+## Fork additions (yayayapluto/museai)
+
+This fork adds a **Chromium-free transport** and multi-tenant plumbing. Keep these
+constraints when changing the codebase:
+
+- `src/museai/drivers/http/gateway.py` implements the muse.ai gateway protocol
+  (WebSocket + Noise XX + protobuf frames). Every fact in `docs/protocol.md` was
+  verified live; do not "fix" the wire format without re-running
+  `scripts/probe_gateway.py`.
+- Never refactor the upstream browser driver (`drivers/browser/*`), `drivers/base.py`
+  or `core/prompt.py` as part of http-driver work — the fork stays additive.
+- Fixtures in `tests/fixtures/` are captured from the live gateway; regenerate them
+  with the probe, never hand-write them.
+- Multi-tenant mode (`MUSE2API_ACCOUNT_STORE=sqlite`) stores hashed API keys only —
+  plaintext keys are returned once by `POST /admin/keys`.

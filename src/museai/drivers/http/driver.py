@@ -1,45 +1,48 @@
-"""HTTP/WebSocket protocol driver (reserved).
+"""HTTP/WebSocket protocol driver: talks to muse.ai without a browser.
 
-Goal: talk to muse.ai's backend directly, without a browser. This removes the
-Chromium dependency and cuts latency and memory by an order of magnitude.
-
-Work breakdown (open for contributors, see CONTRIBUTING.md):
-
-1. Capture the web client's traffic after sending a message and document the
-   transport (endpoint(s), handshake, framing, auth headers) in
-   ``docs/protocol.md``.
-2. Implement a transport client under ``drivers/http/`` that opens a session for
-   an ``Account`` using its cookies.
-3. Implement ``chat_stream`` by mapping upstream incremental events to text
-   deltas.
-4. Implement media generation and attachment download.
-5. Add recorded-fixture tests (no live traffic in CI).
-
-Until then every capability raises ``FeatureNotImplemented`` (HTTP 501), except
-session renewal, which already works over plain HTTP.
+Transport and wire format live in :mod:`museai.drivers.http.gateway`; this class maps
+the driver contract onto it. Chat is supported today; media generation still needs the
+upstream image/video RPCs mapped (see ``docs/protocol.md``).
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 from ...accounts.model import Account
 from ...config import Settings
-from ...errors import FeatureNotImplemented
+from ...errors import ConfigError
 from ...upstream import muse
 from ..base import ChatRequest, DriverCapabilities, MuseDriver, SessionInfo
+from . import gateway
 
 
 class HttpDriver(MuseDriver):
     name = "http"
-    capabilities = DriverCapabilities(renew_session=True)
+    capabilities = DriverCapabilities(chat=True, renew_session=True)
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
     async def chat_stream(self, account: Account, req: ChatRequest) -> AsyncIterator[str]:
-        raise FeatureNotImplemented("http driver chat is not implemented yet; use driver=browser")
-        yield ""  # pragma: no cover  (makes this an async generator)
+        prompt = "\n\n".join([*(f"{role}: {text}" for role, text in req.turns), req.prompt])
+        timeout = req.timeout or self.settings.http_timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        try:
+            session = await gateway.open_session(account, self.settings)
+        except OSError as exc:  # websockets raises plain OSError on dial failures
+            raise ConfigError(f"cannot reach the muse.ai gateway: {exc}") from exc
+        try:
+            async for event in gateway.stream_chat(session, prompt, deadline):
+                if req.cancel is not None and req.cancel.is_set():
+                    return
+                text = gateway.text_delta(event)
+                if text:
+                    yield text
+        finally:
+            await session.aclose()
 
     async def renew_session(self, account: Account) -> SessionInfo:
         return await muse.renew_session(account.cookies)

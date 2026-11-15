@@ -81,8 +81,24 @@ def test_video_task(client, auth):
 
 
 def test_reserved_endpoints(client, auth):
-    assert client.post("/v1/responses", headers=auth, json={}).status_code == 501
     assert client.post("/v1/images/edits", headers=auth).status_code == 501
+
+
+def test_responses_rejects_empty_input(client, auth):
+    assert client.post("/v1/responses", headers=auth, json={}).status_code in (400, 422)
+
+
+def test_responses_returns_output_text(client, auth):
+    r = client.post(
+        "/v1/responses", headers=auth,
+        json={"model": "muse-chat", "input": "say hi"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["object"] == "response"
+    assert body["status"] == "completed"
+    assert body["output_text"]
+    assert body["output"][0]["content"][0]["type"] == "output_text"
 
 
 def test_admin_accounts_crud(client, auth, admin):

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>museai cookie import</title>
+    <style>
+      body { font: 13px/1.4 system-ui, sans-serif; width: 320px; margin: 12px; }
+      label { display: block; margin-top: 8px; font-weight: 600; }
+      input { width: 100%; padding: 4px 6px; box-sizing: border-box; }
+      button { margin-top: 12px; width: 100%; padding: 6px; }
+      #status { margin-top: 10px; white-space: pre-wrap; }
+      .err { color: #b00020; }
+      .ok { color: #0a7d32; }
+    </style>
+  </head>
+  <body>
+    <label>Instance URL <input id="url" value="http://127.0.0.1:18610" /></label>
+    <label>Admin key <input id="key" type="password" placeholder="MUSE2API_ADMIN_KEY" /></label>
+    <label>Account label <input id="label" placeholder="laptop" /></label>
+    <button id="send">Send cookies</button>
+    <div id="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

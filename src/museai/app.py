@@ -51,6 +51,7 @@ def create_app(settings: Settings | None = None, driver: MuseDriver | None = Non
 
     app = FastAPI(title="museai", version=__version__, lifespan=lifespan)
     app.state.services = services
+    app.state.key_cache = {}
 
     @app.exception_handler(Muse2APIError)
     async def _muse_error(_: Request, exc: Muse2APIError) -> JSONResponse:

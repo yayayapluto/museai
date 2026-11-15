@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     account_cooldown: float = 120.0
     max_failover: int = 2
 
+    # --- multi-tenant storage ---
+    account_store: Literal["json", "sqlite"] = "json"
+    """``sqlite`` keeps accounts, API keys and usage in one ``data/museai.db``."""
+    rate_limit_rpm: int = 0
+    """Requests per minute per API key; 0 disables the limiter."""
+
     # --- keepalive (session renewal) ---
     keepalive_enabled: bool = False
     keepalive_interval: float = 6 * 3600
@@ -90,6 +96,10 @@ class Settings(BaseSettings):
     @property
     def tasks_file(self) -> Path:
         return self.data_dir / "tasks.json"
+
+    @property
+    def db_file(self) -> Path:
+        return self.data_dir / "museai.db"
 
     @property
     def key_file(self) -> Path:

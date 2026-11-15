@@ -62,6 +62,8 @@ class ChromiumProcess:
             log.info("attached to existing Chromium on port %s", self.port)
             return url
 
+        # Chrome rejects a relative --user-data-dir (exits with rc=21 on Windows).
+        self.profile_dir = self.profile_dir.resolve()
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
             with contextlib.suppress(FileNotFoundError):
@@ -70,7 +72,8 @@ class ChromiumProcess:
         args = [
             self.executable,
             f"--remote-debugging-port={self.port}",
-            "--remote-allow-origins=*",
+            # No --remote-allow-origins: the loopback DevTools port is unauthenticated, so
+            # any web page allowed to set an Origin could drive it and read session cookies.
             f"--user-data-dir={self.profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",

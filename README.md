@@ -69,19 +69,20 @@ Copy the example environment configuration:
 cp .env.example .env
 ```
 
-Default settings in `.env`:
+`.env.example` ships with `MUSE2API_DRIVER=mock` (offline echo driver, no browser needed).
+Switch to `browser` once muse.ai account cookies are registered. Relevant settings:
 
 ```ini
-MUSEAI_DRIVER=browser
-MUSEAI_HOST=127.0.0.1
-MUSEAI_PORT=18610
-MUSEAI_API_KEY=sk-museai-local-key
-MUSEAI_ADMIN_KEY=sk-museai-admin-key
-MUSEAI_POOL_STRATEGY=affinity
-MUSEAI_KEEPALIVE_ENABLED=true
+MUSE2API_DRIVER=browser
+MUSE2API_HOST=127.0.0.1
+MUSE2API_PORT=18610
+MUSE2API_API_KEY=sk-museai-local-key
+MUSE2API_ADMIN_KEY=sk-museai-admin-key
+MUSE2API_POOL_STRATEGY=affinity
+MUSE2API_KEEPALIVE_ENABLED=true
 ```
 
-*(Note: Chrome executable is auto-detected on macOS `/Applications/Google Chrome.app` and Linux `/usr/bin/chromium`. Set `MUSEAI_CHROMIUM_PATH` if using a custom path).*
+*(Note: Chrome executable is auto-detected on macOS `/Applications/Google Chrome.app` and Linux `/usr/bin/chromium`. Set `MUSE2API_CHROMIUM_PATH` if using a custom path).*
 
 ### 3. Run the Service
 
